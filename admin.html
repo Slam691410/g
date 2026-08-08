@@ -19,11 +19,11 @@
       <div class="brand-logo" style="width:52px;height:52px;font-size:26px">G</div>
     </div>
     <h3 style="text-align:center">🛡 Admin Sistem — GHub One</h3>
-    <div class="hint" style="text-align:center">Area terbatas. Masuk dengan kredensial admin.</div>
+    <div class="hint" style="text-align:center">Login dengan akun ber-role <b>admin</b> (database server).</div>
     <label class="fl">Username</label><input id="admUser" placeholder="admin" autocomplete="username">
     <label class="fl">Password</label><input id="admPass" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')Admin.login()">
     <button class="btn mt" style="width:100%" onclick="Admin.login()">Masuk</button>
-    <div class="hint mt" style="text-align:center">Default: <b>admin / admin123</b> — ganti di menu Pengaturan setelah masuk.</div>
+    <div class="hint mt" style="text-align:center">Akun bawaan: <b>admin / admin123</b> — segera ganti password di menu Pengaturan.</div>
     <div class="row mt" style="justify-content:center"><a href="index.html">← kembali ke aplikasi pengguna</a></div>
   </div>
 </div>
@@ -68,6 +68,7 @@
 
 <script src="js/data.js"></script>
 <script src="js/api.js"></script>
+<script src="js/store.js"></script>
 <script src="js/app.js"></script>
 <script src="js/admin.js"></script>
 <script>Admin.init();</script>

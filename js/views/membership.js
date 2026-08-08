@@ -20,9 +20,9 @@ const Member = {
     navigator.clipboard.writeText(link).then(()=>Toast.show('Link afiliasi tersalin 📋'));
   },
   simulasiKonversi(){
-    // simulasi 1 konversi produk dari klik terakhir — memudahkan pemahaman alur komisi
+    // simulasi 1 konversi produk dari klik terakhir milik akun ini — memudahkan pemahaman alur komisi
     const led = DB.get('ledger', []);
-    const klik = led.find(l=>l.tipe==='klik-afiliasi');
+    const klik = led.find(l=>l.tipe==='klik-afiliasi' && l.kode===affCode());
     if(!klik) return Toast.show('Belum ada klik link afiliasi — bagikan konten dengan keranjang dulu');
     const nilai = 250000;
     const pairId = U.uid();
@@ -35,7 +35,11 @@ const Member = {
 App.register('membership', 'Membership & Komisi', function(el){
   const m = getMembership();
   const active = m.expiry && new Date(m.expiry) > new Date();
-  const led = DB.get('ledger', []);
+  const meU = Store.me ? Store.me.username : '';
+  // ledger bersama (semua pengguna) → tampilkan hanya milik akun ini
+  const ledAll = DB.get('ledger', []);
+  const mine = l => (l.kode && l.kode === affCode()) || (l.user && l.user === meU);
+  const led = ledAll.filter(mine);
   const sum = f => led.filter(f).reduce((s,l)=>s+(l.jumlah||0),0);
   const komisiSistem = sum(l=>l.tipe==='referral-membership');
   const komisiProduk = sum(l=>l.tipe==='komisi-produk');

@@ -40,7 +40,7 @@ App.register('profil', 'Profil', function(el){
         </div>
         <div class="card">
           <h3>💾 Data Anda</h3>
-          <div class="hint">Semua data pribadi tersimpan <b>lokal di perangkat Anda</b> (browser), tidak dikirim ke server.</div>
+          <div class="hint">Akun: <b>@${Store.me?Store.me.username:'—'}</b>. Semua data tersimpan di <b>database server (SQLite)</b> per akun — bisa diakses dari perangkat mana pun dengan login.</div>
           <div class="row mt wrap">
             <button class="btn ghost sm" onclick="Profil.exportData()">⬇ Ekspor JSON</button>
             <button class="btn ghost sm" onclick="Profil.importData()">⬆ Impor JSON</button>
@@ -52,6 +52,7 @@ App.register('profil', 'Profil', function(el){
 });
 
 const Profil = {
+  USER_KEYS: ['profile','membership','tasks','projects','txs','holdings','khl_cfg','khl_anak','khl_biaya','utang','polis','goals','prot_q','income_tab','khl_tab','proj_view','social_tab','scr_tab','scr_sektor','scr_fase','div_bulan'],
   save(){
     const p = {
       nama: document.getElementById('prNama').value.trim(),
@@ -67,11 +68,10 @@ const Profil = {
     };
     DB.set('profile', p);
     const cfg = DB.get('khl_cfg', {}); cfg.provinsi = p.provinsi; if(p.penghasilan) cfg.gaji = cfg.gaji || p.penghasilan; DB.set('khl_cfg', cfg);
-    App.refreshChrome(); Toast.show('Profil tersimpan ✔');
+    App.refreshChrome(); Toast.show('Profil tersimpan ke database ✔');
   },
   exportData(){
-    const out = {};
-    for(let i=0;i<localStorage.length;i++){ const k = localStorage.key(i); if(k.startsWith('ghub_')) out[k] = localStorage.getItem(k); }
+    const out = { _akun: Store.me ? Store.me.username : '', _diekspor: new Date().toISOString(), data: Store.cache.user };
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(out,null,2)],{type:'application/json'}));
     a.download = 'ghub-one-backup.json'; a.click();
@@ -80,15 +80,16 @@ const Profil = {
     const inp = document.createElement('input'); inp.type='file'; inp.accept='.json';
     inp.onchange = ()=>{ const f = inp.files[0]; const r = new FileReader();
       r.onload = ()=>{ try{ const d = JSON.parse(r.result);
-        Object.entries(d).forEach(([k,v])=>{ if(k.startsWith('ghub_')) localStorage.setItem(k,v); });
-        Toast.show('Data terimpor ✔'); App.refreshChrome(); App.navigate();
+        const data = d.data || d;
+        Object.entries(data).forEach(([k,v])=>{ if(this.USER_KEYS.includes(k)) DB.set(k, v); });
+        Toast.show('Data terimpor & tersinkron ke server ✔'); App.refreshChrome(); App.navigate();
       }catch(e){ Toast.show('File tidak valid'); } };
       r.readAsText(f); };
     inp.click();
   },
   reset(){
-    if(!confirm('Hapus SEMUA data GHub One di perangkat ini?')) return;
-    Object.keys(localStorage).filter(k=>k.startsWith('ghub')).forEach(k=>localStorage.removeItem(k));
-    Toast.show('Semua data dihapus'); App.refreshChrome(); App.navigate();
+    if(!confirm('Hapus SEMUA data akun ini di database server?')) return;
+    this.USER_KEYS.forEach(k=>{ if(k!=='membership') DB.set(k, null); });
+    Toast.show('Data akun dikosongkan'); App.refreshChrome(); setTimeout(()=>App.navigate(), 500);
   }
 };

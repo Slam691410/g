@@ -1,0 +1,4 @@
+# Database & data runtime — jangan masuk repo
+data/
+*.sqlite
+*.sqlite-*

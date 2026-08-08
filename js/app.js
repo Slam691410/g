@@ -1,10 +1,5 @@
-/* ========== GHub One — Core App: router, store, utils ========== */
-const DB = {
-  k(key){ return 'ghub_' + key; },
-  get(key, def){ try{ const v = localStorage.getItem(this.k(key)); return v===null ? def : JSON.parse(v); }catch(e){ return def; } },
-  set(key, val){ localStorage.setItem(this.k(key), JSON.stringify(val)); },
-  del(key){ localStorage.removeItem(this.k(key)); }
-};
+/* ========== GHub One — Core App: router & utils ==========
+ * Penyimpanan data: lihat js/store.js (Store + shim DB → database server SQLite) */
 
 const U = {
   uid(){ return Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-4); },
@@ -62,7 +57,8 @@ function wrapLink(url, channel){
 }
 function logCommission(entry){
   const led = DB.get('ledger', []);
-  led.unshift(Object.assign({ id:U.uid(), at:new Date().toISOString() }, entry));
+  led.unshift(Object.assign({ id:U.uid(), at:new Date().toISOString(),
+    user: (typeof Store !== 'undefined' && Store.me) ? Store.me.username : undefined }, entry));
   DB.set('ledger', led);
 }
 
@@ -70,6 +66,7 @@ function logCommission(entry){
 const App = {
   routes: {},
   register(name, title, renderFn){ this.routes[name] = { title, render: renderFn }; },
+  _refreshing: false,
   navigate(){ 
     const hash = location.hash.replace(/^#\//,'') || 'dashboard';
     const name = hash.split('?')[0].split('/')[0];
@@ -81,19 +78,38 @@ const App = {
     el.innerHTML = '';
     try{ route.render(el); }catch(e){ el.innerHTML = `<div class="alert bad">Terjadi kesalahan: ${U.esc(e.message)}</div>`; console.error(e); }
     window.scrollTo(0,0);
+    // Data bersama (feed, grup, komisi) diambil ulang dari server saat masuk halaman terkait
+    if(['social','membership','dashboard'].includes(name) && !this._refreshing){
+      this._refreshing = true;
+      Store.refreshShared().then(changed=>{
+        const cur = (location.hash.replace(/^#\//,'') || 'dashboard').split('?')[0].split('/')[0];
+        if(changed && cur === name) this.navigate();
+      }).finally(()=>{ this._refreshing = false; });
+    }
   },
   refreshChrome(){
     const p = getProfile(), m = getMembership();
-    document.getElementById('avatarChip').textContent = U.initials(p.nama || 'U');
+    const uname = (typeof Store !== 'undefined' && Store.me) ? Store.me.username : '';
+    const av = document.getElementById('avatarChip');
+    av.textContent = U.initials(p.nama || uname || 'U');
+    av.title = uname ? '@' + uname + ' — buka profil' : 'Profil';
     const active = m.expiry && new Date(m.expiry) > new Date();
     document.getElementById('memberChip').textContent = active ? (m.plan==='elite'?'Elite ⭐':'Pro ✦') : 'Free';
   },
-  init(){
+  async init(){
     window.addEventListener('hashchange', ()=>this.navigate());
     document.getElementById('burger').onclick = ()=>document.getElementById('sidebar').classList.toggle('open');
     document.getElementById('modalWrap').onclick = (e)=>{ if(e.target.id==='modalWrap') Modal.close(); };
     document.getElementById('avatarChip').onclick = ()=>location.hash='#/profil';
     setInterval(()=>{ const c=document.getElementById('clock'); if(c) c.textContent = new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }, 1000);
+    const ok = await Store.init();
+    const gate = document.getElementById('authGate');
+    if(!ok){
+      if(gate) gate.style.display = 'flex';
+      if(Store._initError) Toast.show('Server: ' + Store._initError);
+      return;
+    }
+    if(gate) gate.style.display = 'none';
     this.refreshChrome();
     this.navigate();
   }

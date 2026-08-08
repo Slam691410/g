@@ -62,13 +62,18 @@ const Social = {
     const img = (document.getElementById('postImg')||{}).value ? document.getElementById('postImg').value.trim() : '';
     if(!txt && !img) return Toast.show('Tulis sesuatu atau lampirkan gambar dulu');
     const p = getProfile();
+    const meU = Store.me ? Store.me.username : '';
     const ps = this.posts();
-    ps.unshift({ id: U.uid(), at: new Date().toISOString(), author: p.nama || 'Saya', group: groupId||null,
+    ps.unshift({ id: U.uid(), at: new Date().toISOString(), author: p.nama || Store.me?.nama || meU || 'Saya',
+      authorUser: meU, group: groupId||null,
       text: txt, img, cart: this.draftCart.splice(0), likes: 0, comments: [] });
     this.savePosts(ps); Toast.show('Konten terunggah 🎉'); App.navigate();
   },
   like(id){ const ps=this.posts(); const p=ps.find(x=>x.id===id); if(p){ p.likes++; this.savePosts(ps); App.navigate(); } },
-  delPost(id){ if(!confirm('Hapus konten ini?')) return; this.savePosts(this.posts().filter(x=>x.id!==id)); App.navigate(); },
+  delPost(id){
+    const p = this.posts().find(x=>x.id===id);
+    if(p && p.authorUser && Store.me && p.authorUser !== Store.me.username) return Toast.show('Hanya pemilik konten yang bisa menghapus');
+    if(!confirm('Hapus konten ini?')) return; this.savePosts(this.posts().filter(x=>x.id!==id)); App.navigate(); },
   comment(id){ const inp=document.getElementById('cmt_'+id); const v=inp.value.trim(); if(!v) return;
     const ps=this.posts(); const p=ps.find(x=>x.id===id);
     p.comments.push({ by:getProfile().nama||'Saya', at:new Date().toISOString(), text:v });
@@ -98,28 +103,31 @@ const Social = {
     const harga = tipe==='langganan' ? (Number(document.getElementById('grpHarga').value)||0) : 0;
     const gs = this.groups();
     gs.unshift({ id: U.uid(), nama, desc: document.getElementById('grpDesc').value.trim(), tipe, harga,
-      owner: getProfile().nama || 'Saya', at: new Date().toISOString(), members: [], subs: [] });
+      owner: getProfile().nama || Store.me?.nama || Store.me?.username || 'Saya',
+      ownerUser: Store.me ? Store.me.username : '', at: new Date().toISOString(), members: [], subs: [] });
     this.saveGroups(gs); Modal.close(); Toast.show('Grup dibuat 🎉'); App.navigate();
   },
   joinGroup(id){
     const gs = this.groups(); const g = gs.find(x=>x.id===id); if(!g) return;
-    const me = getProfile().nama || 'Saya';
+    const me = Store.me ? Store.me.username : (getProfile().nama || 'Saya');
     if(g.tipe==='langganan'){
       if(!confirm(`Berlangganan grup "${g.nama}" seharga ${U.rp(g.harga)}/bulan?`)) return;
       const exp = new Date(); exp.setMonth(exp.getMonth()+1);
       g.subs.push({ by: me, at: new Date().toISOString(), until: exp.toISOString(), harga: g.harga });
       const sistem = Math.round(g.harga * KOMISI.grupSistem);
       const pairId = U.uid();
-      logCommission({ tipe:'langganan-grup', kanal:g.nama, kode:affCode(), jumlah:g.harga - sistem, status:'komisi kreator', pairId, detail:`Langganan ${U.rp(g.harga)} − fee sistem ${U.rp(sistem)}` });
-      logCommission({ tipe:'fee-sistem', kanalTipe:'grup', kanal:g.nama, kode:'SISTEM', jumlah:sistem, status:'pendapatan sistem', pairId, detail:`Fee platform ${KOMISI.grupSistem*100}% dari langganan ${U.rp(g.harga)}` });
+      // komisi kreator diatribusikan ke PEMILIK grup, fee ke sistem
+      logCommission({ tipe:'langganan-grup', kanal:g.nama, kode:'', user:g.ownerUser||g.owner, jumlah:g.harga - sistem, status:'komisi kreator', pairId, detail:`Langganan oleh @${me}: ${U.rp(g.harga)} − fee sistem ${U.rp(sistem)}` });
+      logCommission({ tipe:'fee-sistem', kanalTipe:'grup', kanal:g.nama, kode:'SISTEM', user:'SISTEM', jumlah:sistem, status:'pendapatan sistem', pairId, detail:`Fee platform ${KOMISI.grupSistem*100}% dari langganan ${U.rp(g.harga)}` });
       Toast.show('Berlangganan aktif 1 bulan ✔');
     }
     if(!g.members.includes(me)) g.members.push(me);
     this.saveGroups(gs); App.navigate();
   },
   isSubscribed(g){
-    const me = getProfile().nama || 'Saya';
+    const me = Store.me ? Store.me.username : (getProfile().nama || 'Saya');
     if(g.tipe!=='langganan') return g.members.includes(me);
+    if(g.ownerUser && Store.me && g.ownerUser === Store.me.username) return true; // pemilik selalu punya akses
     return g.subs.some(s=>s.by===me && new Date(s.until)>new Date());
   }
 };

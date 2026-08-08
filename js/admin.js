@@ -1,20 +1,23 @@
-/* ========== GHub One — Panel Admin Sistem ========== */
+/* ========== GHub One — Panel Admin Sistem (terhubung database server) ========== */
 const Admin = {
   routes: {},
 
-  /* ---------- Auth ---------- */
-  creds(){ return DB.get('admin', { user: 'admin', pass: 'admin123' }); },
-  isAuthed(){ return sessionStorage.getItem('ghub_admin_session') === '1'; },
-  login(){
+  /* ---------- Auth: akun role 'admin' di database server ---------- */
+  isAuthed(){ return !!(Store.me && Store.me.role === 'admin'); },
+  async login(){
     const u = document.getElementById('admUser').value.trim();
     const p = document.getElementById('admPass').value;
-    const c = this.creds();
-    if(u === c.user && p === c.pass){
-      sessionStorage.setItem('ghub_admin_session', '1');
+    try{
+      const user = await Store.login(u, p);
+      if(user.role !== 'admin'){
+        Store.token = null; Store.me = null; localStorage.removeItem('ghub_token');
+        return Toast.show('Akun ini bukan admin — gunakan akun role admin');
+      }
+      await Store.init();
       this.show(); Toast.show('Selamat datang, Admin 🛡');
-    } else Toast.show('Username / password salah');
+    }catch(e){ Toast.show(e.message); }
   },
-  logout(){ sessionStorage.removeItem('ghub_admin_session'); location.reload(); },
+  logout(){ Store.logout(); },
 
   show(){
     document.getElementById('loginGate').style.display = this.isAuthed() ? 'none' : 'flex';
@@ -32,12 +35,25 @@ const Admin = {
     const el = document.getElementById('app'); el.innerHTML = '';
     try{ route.render(el); }catch(e){ el.innerHTML = `<div class="alert bad">Error: ${U.esc(e.message)}</div>`; console.error(e); }
     window.scrollTo(0,0);
+    // segarkan data bersama dari database utk halaman moderasi/keuangan
+    if(['overview','konten','keuangan'].includes(name) && !this._refreshing){
+      this._refreshing = true;
+      Store.refreshShared().then(ch=>{
+        const cur = (location.hash.replace(/^#\//,'') || 'overview').split('?')[0];
+        if(ch && cur === name) this.navigate();
+      }).finally(()=>{ this._refreshing = false; });
+    }
   },
-  init(){
+  async init(){
     window.addEventListener('hashchange', ()=>{ if(this.isAuthed()) this.navigate(); });
     document.getElementById('burger').onclick = ()=>document.getElementById('sidebar').classList.toggle('open');
     document.getElementById('modalWrap').onclick = (e)=>{ if(e.target.id==='modalWrap') Modal.close(); };
     setInterval(()=>{ const c=document.getElementById('clock'); if(c) c.textContent = new Date().toLocaleTimeString('id-ID'); }, 1000);
+    await Store.init();
+    if(Store.me && Store.me.role !== 'admin'){
+      // login sebagai user biasa → jangan pakai sesi ini di panel admin
+      Store.token = null; Store.me = null;
+    }
     this.show();
   },
 
@@ -61,22 +77,12 @@ const Admin = {
 
 /* ================= RINGKASAN ================= */
 Admin.register('overview', 'Ringkasan Sistem', function(el){
-  const posts = DB.get('posts', []), groups = DB.get('groups', []), tasks = DB.get('tasks', []);
   const led = Admin.ledger();
-  const m = DB.get('membership', { plan:'free' });
-  const p = DB.get('profile', {});
   const rev = Admin.revenue();
-  const klik = led.filter(l=>l.tipe==='klik-afiliasi').length;
-  const subsAktif = groups.reduce((s,g)=>s+(g.subs||[]).filter(x=>new Date(x.until)>new Date()).length, 0);
-  const memberAktif = m.expiry && new Date(m.expiry)>new Date() ? 1 : 0;
-
   el.innerHTML = `
-    <div class="alert info mb">Panel ini mengelola data platform yang tersimpan di perangkat ini (mode demo lokal, tanpa server). Saat backend multi-user dipasang, angka di bawah otomatis menjadi agregat seluruh pengguna.</div>
-    <div class="grid g4 mb">
-      <div class="stat"><div class="lbl">Pengguna terdaftar</div><div class="val">${p.nama?1:0}</div><div class="d sub">${U.esc(p.nama||'belum ada profil')}</div></div>
-      <div class="stat"><div class="lbl">Member berbayar aktif</div><div class="val ${memberAktif?'up':''}">${memberAktif}</div><div class="d sub">plan: ${U.esc(m.plan||'free')}${m.expiry?' s.d. '+U.dt(m.expiry):''}</div></div>
-      <div class="stat"><div class="lbl">Konten / Grup</div><div class="val">${posts.length} / ${groups.length}</div><div class="d sub">${subsAktif} langganan grup aktif</div></div>
-      <div class="stat"><div class="lbl">Klik link afiliasi</div><div class="val">${klik}</div><div class="d sub">via pembungkus go.html</div></div>
+    <div class="alert info mb">Terhubung ke <b>database server (SQLite)</b> — angka di bawah adalah agregat <b>seluruh pengguna</b> platform.</div>
+    <div class="grid g4 mb" id="admStats">
+      ${['Pengguna terdaftar','Member berbayar aktif','Konten / Grup','Klik afiliasi (server)'].map(t=>`<div class="stat"><div class="lbl">${t}</div><div class="val">…</div><div class="d sub">memuat…</div></div>`).join('')}
     </div>
     <div class="grid g4 mb">
       <div class="stat"><div class="lbl">💰 Pendapatan Membership</div><div class="val up">${U.rp(rev.membership)}</div></div>
@@ -86,11 +92,12 @@ Admin.register('overview', 'Ringkasan Sistem', function(el){
     </div>
     <div class="grid g2">
       <div class="card">
-        <h3>🕒 Aktivitas terakhir</h3>
+        <h3>🕒 Aktivitas terakhir (semua pengguna)</h3>
         ${led.length ? led.slice(0,8).map(l=>`
           <div class="row between" style="padding:7px 0;border-bottom:1px solid rgba(35,46,78,.6)">
             <span><span class="badge ${l.tipe==='klik-afiliasi'?'b-cyn':l.tipe==='membership'?'b-pur':l.tipe==='fee-sistem'?'b-yel':'b-grn'}">${l.tipe}</span>
-            <span class="hint"> ${U.esc((l.detail||l.kanal||l.url||'').slice(0,50))}</span></span>
+            ${l.user?`<span class="hint">@${U.esc(l.user)}</span>`:''}
+            <span class="hint"> ${U.esc((l.detail||l.kanal||l.url||'').slice(0,44))}</span></span>
             <span class="hint">${U.ago(l.at)}</span>
           </div>`).join('') : '<div class="empty">Belum ada aktivitas.</div>'}
       </div>
@@ -103,78 +110,77 @@ Admin.register('overview', 'Ringkasan Sistem', function(el){
           <button class="btn ghost" onclick="location.hash='#/sumber'">📡 Cek sumber data</button>
         </div>
         <div class="divider"></div>
-        <h3>📦 Statistik modul lain</h3>
-        <div class="hint" style="line-height:1.9">
-          Tugas proyek: <b>${tasks.length}</b> · Transaksi income: <b>${DB.get('txs',[]).length}</b> · Aset: <b>${DB.get('holdings',[]).length}</b><br>
-          Hutang-piutang: <b>${DB.get('utang',[]).length}</b> · Polis: <b>${DB.get('polis',[]).length}</b> · Tujuan investasi: <b>${DB.get('goals',[]).length}</b>
+        <h3>🗄 Infrastruktur</h3>
+        <div class="hint" style="line-height:1.9" id="admInfra">
+          Server: <b>Node.js ${''} (server.js)</b> · Database: <b>SQLite (data/ghub.sqlite)</b><br>
+          Auth: sesi token + scrypt hash · API: REST /api/*
         </div>
       </div>
     </div>`;
+  (async ()=>{
+    try{
+      const s = await Store.api('/api/admin/stats');
+      const boxes = document.getElementById('admStats'); if(!boxes) return;
+      const set = (i,lbl,val,sub)=>{ boxes.children[i].innerHTML = `<div class="lbl">${lbl}</div><div class="val">${val}</div><div class="d sub">${sub}</div>`; };
+      set(0,'Pengguna terdaftar', s.totalUser, s.sesiAktif + ' sesi login aktif');
+      set(1,'Member berbayar aktif', s.memberAktif, 'dari ' + s.totalUser + ' pengguna');
+      set(2,'Konten / Grup', s.posts + ' / ' + s.groups, 'koleksi bersama');
+      set(3,'Klik afiliasi (server)', s.klik, 'tercatat di tabel clicks');
+    }catch(e){ Toast.show('Gagal memuat statistik: ' + e.message); }
+  })();
 });
 
 /* ================= PENGGUNA & MEMBER ================= */
 Admin.register('users', 'Pengguna & Member', function(el){
-  const p = DB.get('profile', {});
-  const m = DB.get('membership', { plan:'free' });
-  const active = m.expiry && new Date(m.expiry) > new Date();
-  const groups = DB.get('groups', []);
-  const posts = DB.get('posts', []);
-  el.innerHTML = `
-    <div class="card mb" style="overflow-x:auto">
-      <h3>👥 Daftar Pengguna (perangkat ini)</h3>
-      <table>
-        <tr><th>Pengguna</th><th>Email / HP</th><th>Provinsi</th><th>Plan</th><th>Masa aktif</th><th>Kode afiliasi</th><th>Konten</th><th>Aksi</th></tr>
-        <tr>
-          <td><b>${U.esc(p.nama||'(belum isi profil)')}</b><div class="hint">${U.esc(p.pekerjaan||'')}</div></td>
-          <td>${U.esc(p.email||'—')}<div class="hint">${U.esc(p.telp||'')}</div></td>
-          <td>${U.esc(p.provinsi||'—')}</td>
-          <td><span class="badge ${active?(m.plan==='elite'?'b-pur':'b-pri'):'b-mut'}">${active?m.plan:'free'}</span></td>
-          <td>${m.expiry?U.dt(m.expiry):'—'} ${active?'<span class="badge b-grn">aktif</span>':''}</td>
-          <td class="mono" style="padding:4px 8px">${m.affCode||'—'}</td>
-          <td>${posts.length} post · ${groups.length} grup</td>
-          <td class="row" style="gap:4px">
-            <button class="btn ghost sm" onclick="Admin.editMember()">✏️ Plan</button>
-            <button class="btn ghost sm" onclick="Admin.resetAff()">↻ Kode</button>
-          </td>
-        </tr>
-      </table>
-    </div>
-    <div class="grid g2">
-      <div class="card">
-        <h3>✏️ Kelola Membership Pengguna</h3>
-        <label class="fl">Plan</label>
-        <select id="admPlan">${PLANS.map(x=>`<option value="${x.id}" ${m.plan===x.id?'selected':''}>${x.nama} — ${x.harga?U.rp(x.harga)+'/bln':'gratis'}</option>`).join('')}</select>
-        <label class="fl">Perpanjang / set masa aktif (bulan dari sekarang)</label>
-        <input id="admBulan" type="number" value="1" min="0">
-        <div class="row mt">
-          <button class="btn sm" onclick="Admin.applyMember()">💾 Terapkan</button>
-          <button class="btn red sm" onclick="Admin.revokeMember()">⛔ Cabut membership</button>
-        </div>
-        <div class="hint mt">Perubahan admin tidak membuat entri pembayaran di buku besar (gratis/komp).</div>
-      </div>
-      <div class="card">
-        <h3>🧾 Ringkasan komisi pengguna ini</h3>
-        ${(()=>{ const led = Admin.ledger();
-          const s = t => led.filter(l=>l.tipe===t).reduce((a,l)=>a+(l.jumlah||0),0);
-          return `<div class="row between mts"><span class="sub">Referral membership</span><b class="up">${U.rp(s('referral-membership'))}</b></div>
-          <div class="row between mts"><span class="sub">Komisi produk konten</span><b class="up">${U.rp(s('komisi-produk'))}</b></div>
-          <div class="row between mts"><span class="sub">Komisi langganan grup</span><b class="up">${U.rp(s('langganan-grup'))}</b></div>`; })()}
-        <div class="divider"></div>
-        <button class="btn ghost sm" onclick="if(confirm('Hapus seluruh riwayat komisi pengguna?')){DB.set('ledger',[]);Admin.navigate();}">🗑 Kosongkan riwayat komisi</button>
-      </div>
-    </div>`;
+  el.innerHTML = `<div class="card"><h3>👥 Semua Pengguna (database server)</h3><div id="admUsers">${loadingBox('Memuat daftar pengguna dari database…')}</div></div>`;
+  (async ()=>{
+    try{
+      const d = await Store.api('/api/admin/users');
+      const box = document.getElementById('admUsers'); if(!box) return;
+      box.innerHTML = `<div style="overflow-x:auto"><table>
+        <tr><th>ID</th><th>Akun</th><th>Nama</th><th>Role</th><th>Plan</th><th>Masa aktif</th><th>Kode aff</th><th>Data</th><th>Kelola membership</th><th></th></tr>
+        ${d.users.map(u=>{
+          const mem = u.membership || { plan:'free' };
+          const active = mem.expiry && new Date(mem.expiry) > new Date();
+          return `<tr>
+            <td class="hint">#${u.id}</td>
+            <td><b>@${U.esc(u.username)}</b><div class="hint">${U.dt(u.created_at)}</div></td>
+            <td>${U.esc(u.nama || (u.profile&&u.profile.nama) || '—')}</td>
+            <td>${u.role==='admin'?'<span class="badge b-red">admin</span>':'<span class="badge b-mut">user</span>'}</td>
+            <td><span class="badge ${active?(mem.plan==='elite'?'b-pur':'b-pri'):'b-mut'}">${active?mem.plan:'free'}</span></td>
+            <td>${mem.expiry?U.dt(mem.expiry):'—'} ${active?'<span class="badge b-grn">aktif</span>':''}</td>
+            <td class="hint">${mem.affCode||'—'}</td>
+            <td class="hint">${u.counts.tasks} tugas · ${u.counts.txs} trx · ${u.counts.goals} goal</td>
+            <td>${u.role==='admin' ? '<span class="hint">—</span>' : `
+              <div class="row" style="gap:4px">
+                <select id="uPlan_${u.id}" style="width:90px;padding:5px 8px">
+                  ${PLANS.map(p=>`<option value="${p.id}" ${mem.plan===p.id?'selected':''}>${p.nama}</option>`).join('')}
+                </select>
+                <input id="uBulan_${u.id}" type="number" value="1" min="0" style="width:56px;padding:5px 8px" title="bulan">
+                <button class="btn sm" onclick="Admin.applyMember(${u.id})">💾</button>
+              </div>`}</td>
+            <td>${u.role==='admin' ? '' : `<button class="btn red sm" title="Hapus akun & seluruh datanya" onclick="Admin.deleteUser(${u.id},'${U.esc(u.username)}')">🗑</button>`}</td>
+          </tr>`; }).join('')}
+      </table></div>
+      <div class="hint mt">💾 = terapkan plan + masa aktif (bulan dari sekarang; 0 = nonaktifkan). Perubahan admin tidak membuat entri pembayaran.</div>`;
+    }catch(e){ const box = document.getElementById('admUsers'); if(box) box.innerHTML = errorBox(e.message); }
+  })();
 });
-Admin.editMember = ()=>{ location.hash='#/users'; Toast.show('Gunakan panel "Kelola Membership" di bawah'); };
-Admin.applyMember = ()=>{
-  const m = DB.get('membership', {});
-  m.plan = document.getElementById('admPlan').value;
-  const bln = Number(document.getElementById('admBulan').value)||0;
-  if(m.plan==='free' || bln===0){ if(m.plan!=='free'){ const e=new Date(); e.setMonth(e.getMonth()+bln); m.expiry=e.toISOString(); } else m.expiry=null; }
-  else { const e=new Date(); e.setMonth(e.getMonth()+bln); m.expiry=e.toISOString(); m.since=m.since||new Date().toISOString(); }
-  DB.set('membership', m); Toast.show('Membership diperbarui ✔'); Admin.navigate();
+Admin.applyMember = async (uid)=>{
+  const plan = document.getElementById('uPlan_'+uid).value;
+  const bulan = Number(document.getElementById('uBulan_'+uid).value)||0;
+  try{
+    await Store.api('/api/admin/user/'+uid+'/membership', { method:'PUT', body:{ plan, bulan } });
+    Toast.show('Membership diperbarui ✔'); Admin.navigate();
+  }catch(e){ Toast.show(e.message); }
 };
-Admin.revokeMember = ()=>{ const m=DB.get('membership',{}); m.plan='free'; m.expiry=null; DB.set('membership',m); Toast.show('Membership dicabut'); Admin.navigate(); };
-Admin.resetAff = ()=>{ const m=DB.get('membership',{}); m.affCode='GH'+U.uid().toUpperCase().slice(0,6); DB.set('membership',m); Toast.show('Kode afiliasi di-reset: '+m.affCode); Admin.navigate(); };
+Admin.deleteUser = async (uid, uname)=>{
+  if(!confirm(`Hapus akun @${uname} beserta SELURUH datanya dari database?`)) return;
+  try{
+    await Store.api('/api/admin/user/'+uid, { method:'DELETE' });
+    Toast.show('Akun dihapus'); Admin.navigate();
+  }catch(e){ Toast.show(e.message); }
+};
 
 /* ================= MODERASI KONTEN ================= */
 Admin.register('konten', 'Moderasi Konten', function(el){
@@ -332,56 +338,59 @@ Admin.testAll = async ()=>{
 /* ================= PENGATURAN ================= */
 Admin.register('setting', 'Pengaturan Sistem', function(el){
   const k = KOMISI;
-  const c = Admin.creds();
   el.innerHTML = `
     <div class="grid g2">
       <div class="card">
         <h3>💸 Tarif Komisi Platform</h3>
-        <div class="hint">Berlaku untuk transaksi baru di seluruh aplikasi (link terbungkus, grup, referral).</div>
+        <div class="hint">Tersimpan di database server (koleksi <b>settings</b>) — berlaku untuk semua pengguna & transaksi baru.</div>
         <label class="fl">Komisi produk — porsi pengguna/kreator (%)</label><input id="kProdUser" type="number" step="any" value="${k.produkUser*100}">
         <label class="fl">Komisi produk — porsi sistem (%)</label><input id="kProdSis" type="number" step="any" value="${k.produkSistem*100}">
         <label class="fl">Fee sistem langganan grup (%)</label><input id="kGrup" type="number" step="any" value="${k.grupSistem*100}">
         <label class="fl">Komisi referral membership (%)</label><input id="kRef" type="number" step="any" value="${k.membershipRef*100}">
-        <button class="btn mt" onclick="Admin.saveKomisi()">💾 Simpan tarif</button>
+        <button class="btn mt" onclick="Admin.saveKomisi()">💾 Simpan tarif ke server</button>
       </div>
       <div class="card">
         <h3>⭐ Harga Paket Membership</h3>
-        ${PLANS.filter(p=>p.harga>0 || p.id!=='free').map(p=>`
+        ${PLANS.filter(p=>p.id!=='free').map(p=>`
           <label class="fl">${p.nama} (Rp/bulan)</label><input id="plan_${p.id}" type="number" value="${p.harga}">`).join('')}
-        <button class="btn mt" onclick="Admin.savePlans()">💾 Simpan harga</button>
+        <button class="btn mt" onclick="Admin.savePlans()">💾 Simpan harga ke server</button>
         <div class="divider"></div>
-        <h3>🔐 Kredensial Admin</h3>
-        <label class="fl">Username</label><input id="admNewUser" value="${U.esc(c.user)}">
+        <h3>🔐 Password Admin</h3>
+        <div class="hint">Akun: <b>@${Store.me?Store.me.username:'admin'}</b> (database server, hash scrypt)</div>
         <label class="fl">Password baru</label><input id="admNewPass" type="password" placeholder="min. 6 karakter">
-        <button class="btn mt" onclick="Admin.savePass()">🔑 Ganti kredensial</button>
+        <button class="btn mt" onclick="Admin.savePass()">🔑 Ganti password</button>
       </div>
     </div>
     <div class="card mt">
       <h3>⚠️ Zona Berbahaya</h3>
       <div class="row wrap mt">
-        <button class="btn red sm" onclick="if(confirm('Hapus SEMUA data platform (konten, grup, keuangan, pengguna) di perangkat ini?')){Object.keys(localStorage).filter(x=>x.startsWith('ghub')).forEach(x=>localStorage.removeItem(x));Toast.show('Semua data platform dihapus');setTimeout(()=>location.reload(),800);}">🗑 Reset seluruh data platform</button>
+        <button class="btn red sm" onclick="if(confirm('Kosongkan SEMUA konten, grup, dan buku besar platform (semua pengguna)?')){DB.set('posts',[]);DB.set('groups',[]);DB.set('ledger',[]);Toast.show('Data platform bersama dikosongkan');setTimeout(()=>Admin.navigate(),600);}">🗑 Kosongkan konten & buku besar platform</button>
       </div>
+      <div class="hint mt">Akun pengguna & data pribadinya dihapus satu per satu lewat menu Pengguna & Member.</div>
     </div>`;
 });
 Admin.saveKomisi = ()=>{
   const v = id => Math.max(0, Number(document.getElementById(id).value)||0)/100;
   const o = { produkUser: v('kProdUser'), produkSistem: v('kProdSis'), grupSistem: v('kGrup'), membershipRef: v('kRef') };
-  localStorage.setItem('ghub_komisi', JSON.stringify(o));
+  const s = Store.get('settings', {}) || {};
+  s.komisi = o;
+  Store.set('settings', s);
   Object.assign(KOMISI, o);
-  Toast.show('Tarif komisi tersimpan ✔'); Admin.navigate();
+  Toast.show('Tarif komisi tersimpan ke server ✔'); Admin.navigate();
 };
 Admin.savePlans = ()=>{
   const o = {};
   PLANS.forEach(p=>{ const el = document.getElementById('plan_'+p.id); if(el){ o[p.id] = Math.max(0, Number(el.value)||0); p.harga = o[p.id]; } });
-  localStorage.setItem('ghub_plans', JSON.stringify(o));
-  Toast.show('Harga paket tersimpan ✔'); Admin.navigate();
+  const s = Store.get('settings', {}) || {};
+  s.plans = o;
+  Store.set('settings', s);
+  Toast.show('Harga paket tersimpan ke server ✔'); Admin.navigate();
 };
-Admin.savePass = ()=>{
-  const user = document.getElementById('admNewUser').value.trim();
+Admin.savePass = async ()=>{
   const pass = document.getElementById('admNewPass').value;
-  if(!user) return Toast.show('Username wajib diisi');
-  if(pass && pass.length < 6) return Toast.show('Password minimal 6 karakter');
-  const c = Admin.creds();
-  DB.set('admin', { user, pass: pass || c.pass });
-  Toast.show('Kredensial admin diperbarui 🔑');
+  if(pass.length < 6) return Toast.show('Password minimal 6 karakter');
+  try{
+    await Store.api('/api/admin/password', { method:'PUT', body:{ password: pass } });
+    Toast.show('Password admin diganti 🔑');
+  }catch(e){ Toast.show(e.message); }
 };
