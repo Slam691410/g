@@ -76,6 +76,9 @@ const Store = {
   set(key, val){
     const shared = this.SHARED.has(key);
     (shared ? this.cache.shared : this.cache.user)[key] = val;
+    // Koleksi bersama dikelola SERVER via endpoint bisnis; hanya admin (moderasi/settings)
+    // yang boleh menulis langsung. User biasa: perubahan bersama terjadi lewat /api/posts, /api/groups, dll.
+    if(shared && !(this.me && this.me.role === 'admin')) return;
     clearTimeout(this._timers[key]);
     this._timers[key] = setTimeout(() => {
       this.api(`/api/data/${shared ? 'shared' : 'user'}/${key}`, { method: 'PUT', body: { value: val } })

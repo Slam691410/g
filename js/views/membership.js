@@ -1,34 +1,28 @@
 /* ========== Membership: daftar/perpanjang + kode afiliasi + pantau semua komisi ========== */
 const Member = {
-  buy(planId){
+  async buy(planId){
     const plan = PLANS.find(p=>p.id===planId);
-    const m = getMembership();
-    const base = (m.expiry && new Date(m.expiry) > new Date() && m.plan===planId) ? new Date(m.expiry) : new Date();
-    const exp = new Date(base); exp.setMonth(exp.getMonth()+1);
-    m.plan = planId; m.since = m.since || new Date().toISOString(); m.expiry = exp.toISOString();
-    DB.set('membership', m);
-    if(plan.harga > 0){
-      logCommission({ tipe:'membership', kanal:plan.nama, kode:affCode(), jumlah:-plan.harga, status:'pembayaran', detail:`${base>new Date()?'Perpanjang':'Daftar'} ${plan.nama} 1 bulan` });
-      const ref = (location.hash.split('ref=')[1]||'').slice(0,10);
-      if(ref && ref !== affCode())
-        logCommission({ tipe:'referral-membership', kanal:plan.nama, kode:ref, jumlah:Math.round(plan.harga*KOMISI.membershipRef), status:'komisi referral', detail:`Referral ${ref}: ${KOMISI.membershipRef*100}% dari ${U.rp(plan.harga)}` });
-    }
-    App.refreshChrome(); Toast.show(`Membership ${plan.nama} aktif s.d. ${U.dt(exp.toISOString())} 🎉`); App.navigate();
+    const ref = (location.hash.split('ref=')[1]||'').slice(0,10);
+    try{
+      const r = await Store.api('/api/membership/buy', { method:'POST', body:{ plan: planId, ref } });
+      Store.cache.user.membership = r.membership;
+      await Store.refreshShared();
+      App.refreshChrome();
+      Toast.show(planId==='free' ? 'Kembali ke paket Free' :
+        `Membership ${plan.nama} aktif s.d. ${U.dt(r.membership.expiry)} 🎉 (diproses server)`);
+      App.navigate();
+    }catch(e){ Toast.show(e.message); }
   },
   copyAff(){
     const link = location.origin + location.pathname + '#/membership?ref=' + affCode();
     navigator.clipboard.writeText(link).then(()=>Toast.show('Link afiliasi tersalin 📋'));
   },
-  simulasiKonversi(){
-    // simulasi 1 konversi produk dari klik terakhir milik akun ini — memudahkan pemahaman alur komisi
-    const led = DB.get('ledger', []);
-    const klik = led.find(l=>l.tipe==='klik-afiliasi' && l.kode===affCode());
-    if(!klik) return Toast.show('Belum ada klik link afiliasi — bagikan konten dengan keranjang dulu');
-    const nilai = 250000;
-    const pairId = U.uid();
-    logCommission({ tipe:'komisi-produk', kanal:klik.kanal, kode:affCode(), jumlah:Math.round(nilai*KOMISI.produkUser), status:'estimasi konversi', pairId, detail:`Konversi ${U.rp(nilai)} → komisi Anda ${KOMISI.produkUser*100}% + sistem ${KOMISI.produkSistem*100}%` });
-    logCommission({ tipe:'fee-sistem', kanalTipe:'produk', kanal:klik.kanal, kode:'SISTEM', jumlah:Math.round(nilai*KOMISI.produkSistem), status:'pendapatan sistem', pairId, detail:`Porsi sistem ${KOMISI.produkSistem*100}% dari konversi ${U.rp(nilai)}` });
-    Toast.show('Konversi tercatat ✔'); App.navigate();
+  async simulasiKonversi(){
+    try{
+      await Store.api('/api/affiliate/convert', { method:'POST', body:{} });
+      await Store.refreshShared();
+      Toast.show('Konversi tercatat — komisi dihitung server ✔'); App.navigate();
+    }catch(e){ Toast.show(e.message); }
   }
 };
 
@@ -66,7 +60,7 @@ App.register('membership', 'Membership & Komisi', function(el){
           <div class="big mt">${p.harga?U.rp(p.harga):'Gratis'}<span class="hint" style="font-weight:400">${p.harga?'/bulan':''}</span></div>
           <div class="hint mt" style="line-height:1.9">${p.fitur.map(f=>'✔ '+f).join('<br>')}</div>
           ${p.harga ? `<button class="btn ${p.id==='elite'?'pur':''} mt" style="width:100%" onclick="Member.buy('${p.id}')">${m.plan===p.id&&active?'🔁 Perpanjang 1 bulan':'Daftar '+p.nama}</button>`
-                    : `<button class="btn ghost mt" style="width:100%" ${!active?'disabled':''} onclick="DB.set('membership',{plan:'free',since:null,expiry:null,affCode:'${affCode()}'});App.refreshChrome();App.navigate()">Turun ke Free</button>`}
+                    : `<button class="btn ghost mt" style="width:100%" ${!active?'disabled':''} onclick="Member.buy('free')">Turun ke Free</button>`}
         </div>`).join('')}
     </div>
 

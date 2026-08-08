@@ -41,43 +41,50 @@ const Social = {
       <button class="btn red sm" onclick="Social.draftCart.splice(${i},1);Social.renderDraftCart()">✕</button></div>`).join('')}</div>
       <button class="btn mt" onclick="Modal.close();App.navigate()">Selesai (${this.draftCart.length} produk)</button>` : '';
   },
-  addCartItem(postId){
+  async addCartItem(postId){
     const nama = document.getElementById('cartNama').value.trim();
     const url = document.getElementById('cartUrl').value.trim();
     const harga = Number(document.getElementById('cartHarga').value) || null;
     if(!nama || !/^https?:\/\//i.test(url)) return Toast.show('Isi nama & URL produk yang valid (https://…)');
-    const item = { id: U.uid(), nama, url, harga };
     if(postId){
-      const ps = this.posts(); const p = ps.find(x=>x.id===postId);
-      if(p){ p.cart = p.cart||[]; p.cart.push(item); this.savePosts(ps); Toast.show('Produk ditambahkan ke konten'); Modal.close(); App.navigate(); return; }
+      try{
+        await Store.api('/api/posts/' + postId + '/cart', { method:'POST', body:{ nama, url, harga } });
+        await Store.refreshShared();
+        Toast.show('Produk ditambahkan ke konten'); Modal.close(); App.navigate();
+      }catch(e){ Toast.show(e.message); }
+      return;
     }
-    this.draftCart.push(item);
+    this.draftCart.push({ id: U.uid(), nama, url, harga });
     document.getElementById('cartNama').value=''; document.getElementById('cartUrl').value=''; document.getElementById('cartHarga').value='';
     this.renderDraftCart(); Toast.show('Masuk keranjang draft');
   },
 
-  /* ---- Unggah konten ---- */
-  publish(groupId){
+  /* ---- Unggah konten (diproses & divalidasi server) ---- */
+  async publish(groupId){
     const txt = document.getElementById('postTxt').value.trim();
     const img = (document.getElementById('postImg')||{}).value ? document.getElementById('postImg').value.trim() : '';
     if(!txt && !img) return Toast.show('Tulis sesuatu atau lampirkan gambar dulu');
-    const p = getProfile();
-    const meU = Store.me ? Store.me.username : '';
-    const ps = this.posts();
-    ps.unshift({ id: U.uid(), at: new Date().toISOString(), author: p.nama || Store.me?.nama || meU || 'Saya',
-      authorUser: meU, group: groupId||null,
-      text: txt, img, cart: this.draftCart.splice(0), likes: 0, comments: [] });
-    this.savePosts(ps); Toast.show('Konten terunggah 🎉'); App.navigate();
+    try{
+      await Store.api('/api/posts', { method:'POST', body:{ text: txt, img, group: groupId||null, cart: this.draftCart } });
+      this.draftCart = [];
+      await Store.refreshShared();
+      Toast.show('Konten terunggah 🎉'); App.navigate();
+    }catch(e){ Toast.show(e.message); }
   },
-  like(id){ const ps=this.posts(); const p=ps.find(x=>x.id===id); if(p){ p.likes++; this.savePosts(ps); App.navigate(); } },
-  delPost(id){
-    const p = this.posts().find(x=>x.id===id);
-    if(p && p.authorUser && Store.me && p.authorUser !== Store.me.username) return Toast.show('Hanya pemilik konten yang bisa menghapus');
-    if(!confirm('Hapus konten ini?')) return; this.savePosts(this.posts().filter(x=>x.id!==id)); App.navigate(); },
-  comment(id){ const inp=document.getElementById('cmt_'+id); const v=inp.value.trim(); if(!v) return;
-    const ps=this.posts(); const p=ps.find(x=>x.id===id);
-    p.comments.push({ by:getProfile().nama||'Saya', at:new Date().toISOString(), text:v });
-    this.savePosts(ps); App.navigate(); },
+  async like(id){
+    try{ await Store.api('/api/posts/' + id + '/like', { method:'POST' }); await Store.refreshShared(); App.navigate(); }
+    catch(e){ Toast.show(e.message); }
+  },
+  async delPost(id){
+    if(!confirm('Hapus konten ini?')) return;
+    try{ await Store.api('/api/posts/' + id, { method:'DELETE' }); await Store.refreshShared(); App.navigate(); }
+    catch(e){ Toast.show(e.message); }
+  },
+  async comment(id){
+    const inp = document.getElementById('cmt_'+id); const v = inp.value.trim(); if(!v) return;
+    try{ await Store.api('/api/posts/' + id + '/comment', { method:'POST', body:{ text: v } }); await Store.refreshShared(); App.navigate(); }
+    catch(e){ Toast.show(e.message); }
+  },
 
   /* ---- Grup & langganan ---- */
   openGroupForm(){
@@ -96,33 +103,28 @@ const Social = {
       </div>
       <button class="btn mt" onclick="Social.createGroup()">Buat Grup</button>`);
   },
-  createGroup(){
+  async createGroup(){
     const nama = document.getElementById('grpNama').value.trim();
     if(!nama) return Toast.show('Nama grup wajib diisi');
     const tipe = document.getElementById('grpTipe').value;
     const harga = tipe==='langganan' ? (Number(document.getElementById('grpHarga').value)||0) : 0;
-    const gs = this.groups();
-    gs.unshift({ id: U.uid(), nama, desc: document.getElementById('grpDesc').value.trim(), tipe, harga,
-      owner: getProfile().nama || Store.me?.nama || Store.me?.username || 'Saya',
-      ownerUser: Store.me ? Store.me.username : '', at: new Date().toISOString(), members: [], subs: [] });
-    this.saveGroups(gs); Modal.close(); Toast.show('Grup dibuat 🎉'); App.navigate();
+    try{
+      await Store.api('/api/groups', { method:'POST', body:{ nama, desc: document.getElementById('grpDesc').value.trim(), tipe, harga } });
+      await Store.refreshShared();
+      Modal.close(); Toast.show('Grup dibuat 🎉'); App.navigate();
+    }catch(e){ Toast.show(e.message); }
   },
-  joinGroup(id){
-    const gs = this.groups(); const g = gs.find(x=>x.id===id); if(!g) return;
-    const me = Store.me ? Store.me.username : (getProfile().nama || 'Saya');
-    if(g.tipe==='langganan'){
+  async joinGroup(id){
+    const g = this.groups().find(x=>x.id===id); if(!g) return;
+    if(g.tipe==='langganan' && !(Store.me && g.ownerUser===Store.me.username)){
       if(!confirm(`Berlangganan grup "${g.nama}" seharga ${U.rp(g.harga)}/bulan?`)) return;
-      const exp = new Date(); exp.setMonth(exp.getMonth()+1);
-      g.subs.push({ by: me, at: new Date().toISOString(), until: exp.toISOString(), harga: g.harga });
-      const sistem = Math.round(g.harga * KOMISI.grupSistem);
-      const pairId = U.uid();
-      // komisi kreator diatribusikan ke PEMILIK grup, fee ke sistem
-      logCommission({ tipe:'langganan-grup', kanal:g.nama, kode:'', user:g.ownerUser||g.owner, jumlah:g.harga - sistem, status:'komisi kreator', pairId, detail:`Langganan oleh @${me}: ${U.rp(g.harga)} − fee sistem ${U.rp(sistem)}` });
-      logCommission({ tipe:'fee-sistem', kanalTipe:'grup', kanal:g.nama, kode:'SISTEM', user:'SISTEM', jumlah:sistem, status:'pendapatan sistem', pairId, detail:`Fee platform ${KOMISI.grupSistem*100}% dari langganan ${U.rp(g.harga)}` });
-      Toast.show('Berlangganan aktif 1 bulan ✔');
     }
-    if(!g.members.includes(me)) g.members.push(me);
-    this.saveGroups(gs); App.navigate();
+    try{
+      await Store.api('/api/groups/' + id + '/join', { method:'POST' });
+      await Store.refreshShared();
+      if(g.tipe==='langganan') Toast.show('Berlangganan aktif 1 bulan ✔ — komisi kreator & fee sistem dihitung server');
+      App.navigate();
+    }catch(e){ Toast.show(e.message); }
   },
   isSubscribed(g){
     const me = Store.me ? Store.me.username : (getProfile().nama || 'Saya');
