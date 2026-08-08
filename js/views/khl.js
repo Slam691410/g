@@ -1,0 +1,294 @@
+/* ========== KHL: UMR vs Kebutuhan Hidup Layak, tanggungan & sekolah, hutang-piutang,
+   dana darurat otomatis, budgeting DINAMIS — data resmi + penyesuaian inflasi realtime ========== */
+const KHL = {
+  tab: DB.get('khl_tab', 'khl'),
+  setTab(t){ this.tab = t; DB.set('khl_tab', t); App.navigate(); },
+
+  cfg(){ return DB.get('khl_cfg', { provinsi: getProfile().provinsi || 'DKI Jakarta', gaji: 0, pasangan: false, pasanganKerja: false }); },
+  saveCfg(c){ DB.set('khl_cfg', c); },
+  anak(){ return DB.get('khl_anak', []); },
+  saveAnak(a){ DB.set('khl_anak', a); },
+  utang(){ return DB.get('utang', []); },
+  saveUtang(u){ DB.set('utang', u); },
+  biaya(){ return DB.get('khl_biaya', Object.fromEntries(JENJANG.map(j=>[j.kode, j.biayaNegeri]))); },
+
+  updateCfg(){
+    const c = this.cfg();
+    c.provinsi = document.getElementById('khlProv').value;
+    c.gaji = Number(document.getElementById('khlGaji').value)||0;
+    c.pasangan = document.getElementById('khlPas').checked;
+    c.pasanganKerja = document.getElementById('khlPasKerja') ? document.getElementById('khlPasKerja').checked : false;
+    this.saveCfg(c); App.navigate();
+  },
+
+  addAnak(){
+    Modal.open(`
+      <h3>＋ Tambah Anak / Tanggungan</h3>
+      <label class="fl">Nama</label><input id="anNama" placeholder="Nama anak">
+      <label class="fl">Tanggal lahir</label><input id="anLahir" type="date">
+      <label class="fl">Jenis sekolah (untuk estimasi biaya)</label>
+      <select id="anSek"><option value="negeri">Negeri</option><option value="swasta">Swasta</option></select>
+      <button class="btn mt" onclick="KHL.submitAnak()">Simpan</button>
+      <div class="hint mt">Jenjang & lama sekolah dihitung otomatis dari tanggal lahir (usia masuk SD ≥6–7 th sesuai Permendikbud 1/2021), hingga estimasi lulus kuliah.</div>`);
+  },
+  submitAnak(){
+    const nama = document.getElementById('anNama').value.trim();
+    const lahir = document.getElementById('anLahir').value;
+    if(!nama || !lahir) return Toast.show('Nama & tanggal lahir wajib diisi');
+    const as = this.anak(); as.push({ id: U.uid(), nama, lahir, sek: document.getElementById('anSek').value });
+    this.saveAnak(as); Modal.close(); App.navigate();
+  },
+  delAnak(id){ this.saveAnak(this.anak().filter(a=>a.id!==id)); App.navigate(); },
+
+  /* Jalur pendidikan anak: jenjang saat ini + sisa tahapan hingga lulus */
+  eduPath(a){
+    const usia = U.age(a.lahir);
+    const path = [];
+    for(const j of JENJANG){
+      const mulaiUsia = j.masuk, lulusUsia = j.masuk + j.lama;
+      if(usia >= lulusUsia) continue;               // sudah lewat jenjang ini
+      const tahunMulai = Math.max(0, mulaiUsia - usia);
+      const sisaTahun = usia >= mulaiUsia ? (lulusUsia - usia) : j.lama;
+      path.push({ j, tahunMulai, sisaTahun, sedang: usia >= mulaiUsia && usia < lulusUsia });
+    }
+    return { usia, path };
+  },
+
+  addUtang(){
+    Modal.open(`
+      <h3>＋ Catat Hutang / Piutang</h3>
+      <label class="fl">Jenis</label>
+      <select id="utJenis"><option value="hutang">Hutang (saya berutang)</option><option value="piutang">Piutang (orang berutang ke saya)</option></select>
+      <label class="fl">Pihak</label><input id="utPihak" placeholder="mis. Bank X / Budi">
+      <div class="grid g2">
+        <div><label class="fl">Nominal (Rp)</label><input id="utNilai" type="number"></div>
+        <div><label class="fl">Cicilan/bulan (Rp)</label><input id="utCicil" type="number" placeholder="0"></div>
+      </div>
+      <div class="grid g2">
+        <div><label class="fl">Bunga %/tahun</label><input id="utBunga" type="number" step="any" placeholder="0"></div>
+        <div><label class="fl">Jatuh tempo</label><input id="utTempo" type="date"></div>
+      </div>
+      <button class="btn mt" onclick="KHL.submitUtang()">Simpan</button>`);
+  },
+  submitUtang(){
+    const pihak = document.getElementById('utPihak').value.trim();
+    const nilai = Number(document.getElementById('utNilai').value);
+    if(!pihak || !nilai) return Toast.show('Pihak & nominal wajib diisi');
+    const us = this.utang();
+    us.push({ id: U.uid(), jenis: document.getElementById('utJenis').value, pihak, nilai,
+      cicil: Number(document.getElementById('utCicil').value)||0, bunga: Number(document.getElementById('utBunga').value)||0,
+      tempo: document.getElementById('utTempo').value, lunas: false, at: new Date().toISOString() });
+    this.saveUtang(us); Modal.close(); App.navigate();
+  },
+  toggleLunas(id){ const us=this.utang(); const u=us.find(x=>x.id===id); u.lunas=!u.lunas; this.saveUtang(us); App.navigate(); },
+  delUtang(id){ this.saveUtang(this.utang().filter(u=>u.id!==id)); App.navigate(); },
+
+  /* Hitung inti: KHL keluarga = UMP provinsi (proxy resmi kebutuhan layak pekerja lajang,
+     UU 13/2003 jo. PP 49/2025) × skala ekuivalensi OECD + biaya sekolah per anak,
+     disesuaikan inflasi terkini (World Bank CPI, realtime). */
+  hitung(inflasi){
+    const c = this.cfg();
+    const ump = UMP2026.data[c.provinsi];
+    const adj = inflasi != null ? (1 + inflasi/100 * ((Date.now() - new Date('2026-01-01')) / 31557600000)) : 1;
+    const khlSatu = ump * adj;
+    const anak = this.anak();
+    let faktor = EQUIV.kepala + (c.pasangan ? EQUIV.dewasa : 0);
+    let biayaSek = 0; const detail = [];
+    const biaya = this.biaya();
+    for(const a of anak){
+      const { usia, path } = this.eduPath(a);
+      faktor += usia < 14 ? EQUIV.anak : EQUIV.dewasa;
+      const cur = path.find(p=>p.sedang);
+      if(cur){
+        const perTahun = a.sek==='swasta' ? cur.j.biayaSwasta : (biaya[cur.j.kode] ?? cur.j.biayaNegeri);
+        biayaSek += perTahun * adj / 12;
+        detail.push({ a, usia, jenjang: cur.j.nama, perTahun: perTahun*adj });
+      }
+    }
+    const khlKeluarga = khlSatu * faktor + biayaSek;
+    const income = (c.gaji||0) + (c.pasangan && c.pasanganKerja ? c.gaji*0 : 0);
+    return { c, ump, adj, khlSatu, faktor, biayaSek, khlKeluarga, detail, anak, rasio: khlKeluarga ? (c.gaji / khlKeluarga) : 0 };
+  },
+
+  /* Budgeting DINAMIS — bukan 50/30/20. Alokasi menyesuaikan rasio gaji/KHL. */
+  budgetDinamis(rasio){
+    if(rasio < 1)    return { tier: 'Bertahan (Survival)', warna: 'b-red', a: { 'Kebutuhan pokok': 90, 'Cicilan/darurat': 8, 'Sosial': 2, 'Gaya hidup': 0, 'Investasi': 0 },
+      pesan: 'Gaji masih di bawah KHL keluarga. Fokus 90% ke kebutuhan pokok — jangan dipaksakan menabung besar; cari tambahan penghasilan & bantuan yang tersedia.' };
+    if(rasio < 1.3)  return { tier: 'Pra-Stabil', warna: 'b-yel', a: { 'Kebutuhan pokok': 75, 'Dana darurat': 10, 'Cicilan': 10, 'Gaya hidup': 3, 'Investasi': 2 },
+      pesan: 'Sedikit di atas KHL. Prioritas: bangun dana darurat kecil dulu (target 1× pengeluaran), gaya hidup ditahan.' };
+    if(rasio < 2)    return { tier: 'Stabil', warna: 'b-pri', a: { 'Kebutuhan pokok': 60, 'Dana darurat': 10, 'Investasi': 12, 'Proteksi': 5, 'Gaya hidup': 10, 'Sosial': 3 },
+      pesan: 'Kebutuhan aman. Mulai rutin investasi & lengkapi proteksi (BPJS + term life bila ada tanggungan).' };
+    if(rasio < 3.5)  return { tier: 'Mapan', warna: 'b-grn', a: { 'Kebutuhan pokok': 45, 'Investasi': 25, 'Proteksi': 6, 'Gaya hidup': 15, 'Sosial': 5, 'Pendidikan/upgrade diri': 4 },
+      pesan: 'Porsi investasi dinaikkan agresif (25%+). Diversifikasi: SBN, reksa dana indeks, saham fundamental bagus.' };
+    return           { tier: 'Sejahtera', warna: 'b-pur', a: { 'Kebutuhan pokok': 30, 'Investasi': 35, 'Proteksi': 5, 'Gaya hidup': 18, 'Sosial & filantropi': 8, 'Pendidikan': 4 },
+      pesan: 'Fokus akumulasi aset produktif & filantropi. Pertimbangkan perencanaan pajak & warisan.' };
+  }
+};
+
+App.register('khl', 'KHL & Budget Dinamis', function(el){
+  const tab = KHL.tab;
+  el.innerHTML = `
+    <div class="tabs">
+      <button class="tab ${tab==='khl'?'active':''}" onclick="KHL.setTab('khl')">🏡 UMR vs KHL</button>
+      <button class="tab ${tab==='utang'?'active':''}" onclick="KHL.setTab('utang')">🤝 Hutang-Piutang</button>
+      <button class="tab ${tab==='darurat'?'active':''}" onclick="KHL.setTab('darurat')">🚨 Dana Darurat</button>
+      <button class="tab ${tab==='budget'?'active':''}" onclick="KHL.setTab('budget')">⚖️ Budget Dinamis</button>
+    </div>
+    <div id="khlBody">${loadingBox('Mengambil inflasi terkini (World Bank) untuk penyesuaian realtime…')}</div>`;
+
+  (async ()=>{
+    let inflasi = null, inflasiMeta = null;
+    try{ inflasiMeta = await API.worldBank('FP.CPI.TOTL.ZG', 'Inflasi (CPI, % YoY)'); inflasi = inflasiMeta.value; }catch(e){ /* tetap jalan tanpa penyesuaian */ }
+    const H = KHL.hitung(inflasi);
+    const body = document.getElementById('khlBody'); if(!body) return;
+
+    const srcRealtime = `
+      <div class="card mt">
+        <h3>🧾 Sumber & pembaruan data</h3>
+        <div class="hint">
+          • UMP ${UMP2026.meta.tahun}: <b>${U.esc(UMP2026.meta.dasar)}</b>, berlaku ${U.esc(UMP2026.meta.berlaku)} — <a href="${UMP2026.meta.url}" target="_blank">${U.esc(UMP2026.meta.sumber)}</a><br>
+          • Skala tanggungan: <a href="${EQUIV.url}" target="_blank">${U.esc(EQUIV.sumber)}</a> (dewasa +0,5 · anak &lt;14 th +0,3)<br>
+          • Biaya sekolah: <a href="${JENJANG_SRC.url}" target="_blank">${U.esc(JENJANG_SRC.label)}</a><br>
+          • Penyesuaian inflasi <b>realtime</b>: ${inflasiMeta ? `<a href="${inflasiMeta.sourceUrl}" target="_blank">World Bank CPI</a> = <b>${U.pct(inflasi)}</b> (data ${inflasiMeta.year}, diambil ${U.time(inflasiMeta.fetchedAt)}) — angka KHL di atas sudah disesuaikan ${U.num((H.adj-1)*100,2)}% sejak Jan 2026` : 'gagal dimuat (nilai tanpa penyesuaian)'}
+        </div>
+      </div>`;
+
+    if(tab==='khl'){
+      body.innerHTML = `
+        <div class="card mb">
+          <h3>⚙️ Profil Keluarga</h3>
+          <div class="grid g3">
+            <div><label class="fl">Provinsi (UMP resmi 2026)</label>
+              <select id="khlProv" onchange="KHL.updateCfg()">${Object.keys(UMP2026.data).map(p=>`<option ${H.c.provinsi===p?'selected':''}>${p}</option>`).join('')}</select></div>
+            <div><label class="fl">Gaji bulanan Anda (Rp)</label>
+              <input id="khlGaji" type="number" value="${H.c.gaji||''}" placeholder="mis. 6000000" onchange="KHL.updateCfg()"></div>
+            <div><label class="fl">Pasangan</label>
+              <div class="row" style="padding-top:8px">
+                <label class="row" style="gap:5px;font-size:13px"><input type="checkbox" id="khlPas" style="width:auto" ${H.c.pasangan?'checked':''} onchange="KHL.updateCfg()"> Punya pasangan</label>
+              </div></div>
+          </div>
+        </div>
+
+        <div class="grid g4 mb">
+          <div class="stat"><div class="lbl">UMP ${H.c.provinsi} 2026</div><div class="val">${U.rp(H.ump)}</div><div class="d sub">resmi Kemnaker</div></div>
+          <div class="stat"><div class="lbl">KHL 1 orang (adj. inflasi)</div><div class="val">${U.rp(H.khlSatu)}</div><div class="d sub">×${U.num(H.adj,4)} penyesuaian</div></div>
+          <div class="stat"><div class="lbl">KHL keluarga (×${U.num(H.faktor,1)} + sekolah)</div><div class="val">${U.rp(H.khlKeluarga)}</div><div class="d sub">${H.anak.length} anak · sekolah ${U.rp(H.biayaSek)}/bln</div></div>
+          <div class="stat"><div class="lbl">Gaji vs KHL keluarga</div>
+            <div class="val ${H.rasio>=1?'up':'down'}">${H.c.gaji?U.num(H.rasio*100,0)+'%':'—'}</div>
+            <div class="d ${H.rasio>=1?'up':'down'}">${H.c.gaji ? (H.rasio>=1 ? 'di atas KHL ✔' : 'DI BAWAH KHL ⚠') : 'isi gaji dulu'}</div></div>
+        </div>
+
+        ${H.c.gaji ? `<div class="alert ${H.rasio>=1.3?'ok':H.rasio>=1?'info':'bad'} mb">
+          ${H.rasio>=1 ? `Gaji Anda <b>${U.rp(H.c.gaji)}</b> = <b>${U.num(H.rasio,2)}×</b> KHL keluarga (${U.rp(H.khlKeluarga)}). Selisih ${U.rp(H.c.gaji-H.khlKeluarga)}/bulan bisa dialokasikan sesuai <a href="#" onclick="KHL.setTab('budget');return false">Budget Dinamis</a>.`
+          : `Gaji Anda <b>${U.rp(H.c.gaji)}</b> masih di bawah KHL keluarga <b>${U.rp(H.khlKeluarga)}</b> (kurang ${U.rp(H.khlKeluarga-H.c.gaji)}). Buka tab <a href="#" onclick="KHL.setTab('budget');return false">Budget Dinamis</a> — mode survival, alokasi difokuskan ke kebutuhan pokok.`}
+        </div>` : ''}
+
+        <div class="card">
+          <div class="row between mb wrap"><h3 style="margin:0">👶 Anak / Tanggungan & Jalur Sekolah (otomatis dari tanggal lahir)</h3>
+            <button class="btn sm" onclick="KHL.addAnak()">＋ Anak</button></div>
+          ${H.anak.length ? H.anak.map(a=>{
+            const { usia, path } = KHL.eduPath(a);
+            return `<div class="group-card mb">
+              <div class="row between wrap"><b>${U.esc(a.nama)}</b>
+                <div class="row"><span class="badge b-cyn">${usia} tahun</span><span class="badge ${a.sek==='swasta'?'b-pur':'b-grn'}">${a.sek}</span>
+                <button class="btn ghost sm" onclick="KHL.delAnak('${a.id}')">🗑</button></div></div>
+              ${path.length ? `<div class="flow mt">${path.map(p=>`
+                <div class="flow-item"><b>${p.j.nama}</b> ${p.sedang?'<span class="badge b-grn">SEDANG DIJALANI</span>':`<span class="hint">mulai ~${p.tahunMulai} th lagi (usia ${p.j.masuk})</span>`}
+                  — ${p.sisaTahun} th ${p.sedang?'tersisa':''} · est. ${U.rp((a.sek==='swasta'?p.j.biayaSwasta:p.j.biayaNegeri)*H.adj)}/th
+                  · total jenjang ${U.rp((a.sek==='swasta'?p.j.biayaSwasta:p.j.biayaNegeri)*H.adj*p.sisaTahun)}</div>`).join('')}
+                <div class="flow-item"><b>🎓 Estimasi lulus kuliah</b> — usia 23 th (${new Date(new Date(a.lahir).getFullYear()+23, 5).getFullYear()}), total biaya tersisa
+                <b>${U.rp(path.reduce((s,p)=>s+(a.sek==='swasta'?p.j.biayaSwasta:p.j.biayaNegeri)*H.adj*p.sisaTahun,0))}</b></div></div>`
+              : `<div class="hint mt">Sudah melewati usia pendidikan formal.</div>`}
+            </div>`; }).join('') : `<div class="empty">Belum ada tanggungan anak. Tambahkan — jenjang sekolah & estimasi biaya hingga lulus dihitung otomatis dari tanggal lahir.</div>`}
+        </div>
+        ${srcRealtime}`;
+    }
+    else if(tab==='utang'){
+      const us = KHL.utang();
+      const totalH = us.filter(u=>u.jenis==='hutang'&&!u.lunas).reduce((s,u)=>s+u.nilai,0);
+      const totalP = us.filter(u=>u.jenis==='piutang'&&!u.lunas).reduce((s,u)=>s+u.nilai,0);
+      const cicilan = us.filter(u=>u.jenis==='hutang'&&!u.lunas).reduce((s,u)=>s+u.cicil,0);
+      const dsr = H.c.gaji ? cicilan/H.c.gaji*100 : null;
+      body.innerHTML = `
+        <div class="grid g4 mb">
+          <div class="stat"><div class="lbl">Total Hutang aktif</div><div class="val down">${U.rp(totalH)}</div></div>
+          <div class="stat"><div class="lbl">Total Piutang aktif</div><div class="val up">${U.rp(totalP)}</div></div>
+          <div class="stat"><div class="lbl">Cicilan/bulan</div><div class="val">${U.rp(cicilan)}</div></div>
+          <div class="stat"><div class="lbl">Rasio cicilan (DSR)</div><div class="val ${dsr==null?'':dsr>35?'down':'up'}">${dsr==null?'—':U.num(dsr,0)+'%'}</div>
+            <div class="d sub">sehat ≤ 35% gaji (standar OJK/SLIK)</div></div>
+        </div>
+        ${dsr!=null && dsr>35 ? `<div class="alert bad mb">⚠ Cicilan ${U.num(dsr,0)}% dari gaji — melebihi ambang sehat 35%. Prioritaskan pelunasan bunga tertinggi (metode avalanche).</div>`:''}
+        <div class="card">
+          <div class="row between mb wrap"><h3 style="margin:0">🤝 Daftar Hutang & Piutang</h3><button class="btn sm" onclick="KHL.addUtang()">＋ Catat</button></div>
+          ${us.length ? `<div style="overflow-x:auto"><table>
+            <tr><th>Jenis</th><th>Pihak</th><th class="num">Nominal</th><th class="num">Cicilan/bln</th><th class="num">Bunga</th><th>Jatuh tempo</th><th>Status</th><th></th></tr>
+            ${us.map(u=>`<tr>
+              <td><span class="badge ${u.jenis==='hutang'?'b-red':'b-grn'}">${u.jenis}</span></td>
+              <td><b>${U.esc(u.pihak)}</b></td><td class="num">${U.rp(u.nilai)}</td><td class="num">${U.rp(u.cicil)}</td>
+              <td class="num">${U.pct(u.bunga,1)}</td>
+              <td>${u.tempo ? (new Date(u.tempo)<new Date()&&!u.lunas?`<span class="down">${U.dt(u.tempo)} ⚠ lewat</span>`:U.dt(u.tempo)) : '—'}</td>
+              <td><button class="btn ${u.lunas?'grn':'ghost'} sm" onclick="KHL.toggleLunas('${u.id}')">${u.lunas?'✓ Lunas':'Belum'}</button></td>
+              <td><button class="btn ghost sm" onclick="KHL.delUtang('${u.id}')">🗑</button></td></tr>`).join('')}
+          </table></div>` : `<div class="empty">Belum ada catatan hutang/piutang.</div>`}
+        </div>`;
+    }
+    else if(tab==='darurat'){
+      // pengeluaran bulanan aktual dari modul Income (otomatis), fallback KHL keluarga
+      const ts = DB.get('txs', []);
+      const now = new Date(); const last3 = [];
+      for(let i=0;i<3;i++){ const m=new Date(now.getFullYear(),now.getMonth()-i,1);
+        last3.push(ts.filter(t=>t.tipe==='Pengeluaran' && new Date(t.tgl).getMonth()===m.getMonth() && new Date(t.tgl).getFullYear()===m.getFullYear()).reduce((s,t)=>s+t.nilai,0)); }
+      const avgOut = last3.filter(x=>x>0).length ? last3.reduce((a,b)=>a+b,0)/Math.max(1,last3.filter(x=>x>0).length) : 0;
+      const basis = avgOut || H.khlKeluarga;
+      const basisLbl = avgOut ? 'rata-rata pengeluaran 3 bulan terakhir (otomatis dari modul Income)' : 'KHL keluarga (belum ada data pengeluaran)';
+      const nTanggungan = (H.c.pasangan?1:0) + H.anak.length;
+      const bulan = nTanggungan===0 ? 3 : nTanggungan<=2 ? 6 : nTanggungan<=4 ? 9 : 12;
+      const target = basis * bulan;
+      const kas = DB.get('holdings', []).filter(h=>h.jenis==='cash').reduce((s,h)=>s+h.qty,0);
+      body.innerHTML = `
+        <div class="grid g3 mb">
+          <div class="stat"><div class="lbl">Basis pengeluaran/bulan</div><div class="val">${U.rp(basis)}</div><div class="d sub">${basisLbl}</div></div>
+          <div class="stat"><div class="lbl">Kebutuhan (otomatis)</div><div class="val">${bulan}× bulan</div><div class="d sub">${nTanggungan} tanggungan → standar perencana keuangan</div></div>
+          <div class="stat"><div class="lbl">🎯 Target Dana Darurat</div><div class="val" style="color:var(--yel)">${U.rp(target)}</div></div>
+        </div>
+        <div class="card">
+          <h3>Progres dana darurat</h3>
+          <div class="row between"><span class="sub">Kas/deposito tercatat di modul Income → Aset</span><b>${U.rp(kas)} / ${U.rp(target)}</b></div>
+          <div class="bar-wrap mt" style="height:14px"><div class="bar" style="width:${U.clamp(kas/Math.max(target,1)*100,0,100)}%;background:linear-gradient(90deg,var(--yel),var(--grn))"></div></div>
+          <div class="hint mt">Aturan jumlah bulan: lajang 3×, ≤2 tanggungan 6×, 3–4 tanggungan 9×, >4 tanggungan 12× pengeluaran bulanan — praktik standar perencanaan keuangan (OJK Sikapi Uangmu).</div>
+          ${SRC('OJK — Sikapi Uangmu: Dana Darurat', 'https://sikapiuangmu.ojk.go.id')}
+        </div>`;
+    }
+    else { // budget dinamis
+      const B = KHL.budgetDinamis(H.rasio || 0);
+      const gaji = H.c.gaji || 0;
+      body.innerHTML = `
+        ${gaji ? '' : `<div class="alert warn mb">Isi gaji & profil di tab <a href="#" onclick="KHL.setTab('khl');return false">UMR vs KHL</a> dulu agar alokasi dihitung.</div>`}
+        <div class="card mb">
+          <div class="row between wrap">
+            <h3 style="margin:0">⚖️ Budget Dinamis — bukan 50/30/20</h3>
+            <span class="badge ${B.warna}" style="font-size:13px">Tier: ${B.tier} (${U.num((H.rasio||0)*100,0)}% dari KHL)</span>
+          </div>
+          <div class="hint mt">Alokasi menyesuaikan <b>rasio gaji ÷ KHL keluarga</b> — keluarga yang belum survive tidak dipaksa pola orang mapan, dan sebaliknya.</div>
+          <div class="alert info mt">${B.pesan}</div>
+          <div class="mt">
+            ${Object.entries(B.a).map(([k,v])=>`
+              <div class="row between mts"><span>${k} <span class="hint">(${v}%)</span></span><b>${gaji?U.rp(gaji*v/100):v+'%'}</b></div>
+              <div class="bar-wrap mts"><div class="bar" style="width:${v}%;background:${v>=40?'var(--red)':v>=20?'var(--yel)':'var(--grn)'}"></div></div>`).join('')}
+          </div>
+        </div>
+        <div class="card">
+          <h3>Bagaimana tier dihitung?</h3>
+          <div style="overflow-x:auto"><table>
+            <tr><th>Rasio Gaji/KHL</th><th>Tier</th><th>Fokus utama</th></tr>
+            <tr><td>&lt; 100%</td><td><span class="badge b-red">Bertahan</span></td><td>90% kebutuhan pokok — belum saatnya dipaksa investasi</td></tr>
+            <tr><td>100–130%</td><td><span class="badge b-yel">Pra-Stabil</span></td><td>Dana darurat mini + tahan gaya hidup</td></tr>
+            <tr><td>130–200%</td><td><span class="badge b-pri">Stabil</span></td><td>Mulai investasi rutin 12% + proteksi</td></tr>
+            <tr><td>200–350%</td><td><span class="badge b-grn">Mapan</span></td><td>Investasi agresif 25%</td></tr>
+            <tr><td>&gt; 350%</td><td><span class="badge b-pur">Sejahtera</span></td><td>Akumulasi aset 35% + filantropi</td></tr>
+          </table></div>
+        </div>
+        ${srcRealtime}`;
+    }
+  })();
+});
