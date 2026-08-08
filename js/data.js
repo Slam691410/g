@@ -225,3 +225,11 @@ function risetLinks(ticker, nama){
     { nama: 'Berita korupsi/kasus (riset)', url: 'https://news.google.com/search?q=' + q + '%20kasus%20OR%20korupsi%20OR%20gagal%20bayar&hl=id' }
   ];
 }
+
+/* ---- Override admin (tarif komisi & harga paket) — diatur dari admin.html ---- */
+try{
+  const _k = JSON.parse(localStorage.getItem('ghub_komisi') || 'null');
+  if(_k) Object.assign(KOMISI, _k);
+  const _p = JSON.parse(localStorage.getItem('ghub_plans') || 'null');
+  if(_p) PLANS.forEach(pl => { if(_p[pl.id] != null) pl.harga = _p[pl.id]; });
+}catch(e){ /* abaikan */ }

@@ -25,7 +25,9 @@ const Member = {
     const klik = led.find(l=>l.tipe==='klik-afiliasi');
     if(!klik) return Toast.show('Belum ada klik link afiliasi — bagikan konten dengan keranjang dulu');
     const nilai = 250000;
-    logCommission({ tipe:'komisi-produk', kanal:klik.kanal, kode:affCode(), jumlah:Math.round(nilai*KOMISI.produkUser), status:'estimasi konversi', detail:`Konversi ${U.rp(nilai)} → komisi Anda ${KOMISI.produkUser*100}% + sistem ${KOMISI.produkSistem*100}%` });
+    const pairId = U.uid();
+    logCommission({ tipe:'komisi-produk', kanal:klik.kanal, kode:affCode(), jumlah:Math.round(nilai*KOMISI.produkUser), status:'estimasi konversi', pairId, detail:`Konversi ${U.rp(nilai)} → komisi Anda ${KOMISI.produkUser*100}% + sistem ${KOMISI.produkSistem*100}%` });
+    logCommission({ tipe:'fee-sistem', kanalTipe:'produk', kanal:klik.kanal, kode:'SISTEM', jumlah:Math.round(nilai*KOMISI.produkSistem), status:'pendapatan sistem', pairId, detail:`Porsi sistem ${KOMISI.produkSistem*100}% dari konversi ${U.rp(nilai)}` });
     Toast.show('Konversi tercatat ✔'); App.navigate();
   }
 };

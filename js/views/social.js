@@ -109,7 +109,9 @@ const Social = {
       const exp = new Date(); exp.setMonth(exp.getMonth()+1);
       g.subs.push({ by: me, at: new Date().toISOString(), until: exp.toISOString(), harga: g.harga });
       const sistem = Math.round(g.harga * KOMISI.grupSistem);
-      logCommission({ tipe:'langganan-grup', kanal:g.nama, kode:affCode(), jumlah:g.harga - sistem, status:'komisi kreator', detail:`Langganan ${U.rp(g.harga)} − fee sistem ${U.rp(sistem)}` });
+      const pairId = U.uid();
+      logCommission({ tipe:'langganan-grup', kanal:g.nama, kode:affCode(), jumlah:g.harga - sistem, status:'komisi kreator', pairId, detail:`Langganan ${U.rp(g.harga)} − fee sistem ${U.rp(sistem)}` });
+      logCommission({ tipe:'fee-sistem', kanalTipe:'grup', kanal:g.nama, kode:'SISTEM', jumlah:sistem, status:'pendapatan sistem', pairId, detail:`Fee platform ${KOMISI.grupSistem*100}% dari langganan ${U.rp(g.harga)}` });
       Toast.show('Berlangganan aktif 1 bulan ✔');
     }
     if(!g.members.includes(me)) g.members.push(me);
