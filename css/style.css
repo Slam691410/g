@@ -140,3 +140,10 @@ tr:hover td{background:rgba(91,140,255,.04)}
   .kanban{grid-template-columns:1fr}
   .content{padding:14px}
 }
+/* Strip integrasi per menu */
+.int-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:rgba(13,19,34,.7);border:1px dashed var(--line);border-radius:12px;padding:8px 12px;margin-bottom:16px}
+.int-title{font-size:10.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#54608a;margin-right:4px}
+.int-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--mut);background:#0d1322;border:1px solid var(--line);border-radius:99px;padding:4px 10px;cursor:pointer;text-decoration:none;transition:.15s}
+.int-chip b{color:var(--txt);font-weight:700}
+.int-chip.on{border-color:rgba(47,216,130,.35)}
+.int-chip:hover{border-color:var(--pri);color:var(--txt)}

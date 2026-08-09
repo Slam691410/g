@@ -539,8 +539,23 @@ Admin.register('integrasi', 'Integrasi Pihak Ketiga', function(el){
       <div class="hint mt">Setelah disetujui: tempel <b>aff_id</b> ke template deeplink & daftarkan <b>URL postback</b> (menu Pengaturan) → sejak itu <b>100% autopilot</b>: link pengguna terbungkus otomatis + Sub-ID, konversi terverifikasi masuk sendiri via postback, payout terbagi 70/30 otomatis, anti-duplikat order_id.</div>
     </div>
 
-    <div class="card">
+    <div class="card mb">
       <h3>🔴 Jujur: belum terhubung / belum dibangun (${INTEGRASI.belum.length})</h3>
       ${INTEGRASI.belum.map(i=>`<div class="alert warn mts"><b>${i.n}</b><br><span class="hint">${i.ket}</span></div>`).join('')}
+    </div>
+
+    <div class="card" style="overflow-x:auto">
+      <h3>🗺 Matriks integrasi per menu aplikasi pengguna</h3>
+      <div class="hint mb">Setiap menu pengguna menampilkan strip "🔌 Integrasi modul ini" — status live, jam pengambilan data, mode autopilot, dan tombol uji per provider.</div>
+      <table>
+        <tr><th>Menu</th><th>Provider yang menyuplai</th></tr>
+        ${Object.entries(MODUL_INTEGRASI).map(([r, ids])=>`
+          <tr><td><b>${{dashboard:'🏠 Dashboard',social:'🌐 Sosial Hub',project:'📋 Projek Tim',income:'💰 Income',khl:'🏡 KHL & Budget',proteksi:'🛡️ Proteksi',invest:'🎯 Tujuan Investasi',screening:'🔎 Screening',dividen:'📅 Dividen',profil:'👤 Profil',membership:'⭐ Membership'}[r]||r}</b></td>
+          <td class="hint">${ids.map(id=>{
+            const P = IntegrasiUI.PROV[id];
+            return '<span class="badge ' + (id==='db'?'b-cyn':id==='affiliate'?'b-pur':P&&P.statis?'b-yel':'b-grn') + '" style="margin:2px 3px 2px 0">' +
+              (id==='db'?'Database server':id==='affiliate'?'Mesin afiliasi':P?P.nama:id) + '</span>';
+          }).join('')}</td></tr>`).join('')}
+      </table>
     </div>`;
 });

@@ -238,3 +238,22 @@ try{
   const _p = JSON.parse(localStorage.getItem('ghub_plans') || 'null');
   if(_p) PLANS.forEach(pl => { if(_p[pl.id] != null) pl.harga = _p[pl.id]; });
 }catch(e){ /* abaikan */ }
+
+/* ---- Pemetaan INTEGRASI per menu/modul ----
+ * Dipakai IntegrasiUI (app.js) utk menampilkan strip status integrasi
+ * di atas SETIAP menu: provider apa yang menyuplai modul tsb, status
+ * live/cache, mode autopilot, dan tautan sumber resmi.
+ */
+const MODUL_INTEGRASI = {
+  dashboard: ['yahoo','coingecko','fx','rss','db'],
+  social: ['affiliate','marketplaces','db'],
+  project: ['db'],
+  income: ['yahoo','coingecko','fx','db'],
+  khl: ['ump','worldbank','bps','db'],
+  proteksi: ['bpjs','ojkmarket','db'],
+  invest: ['sbn','yahoo','db'],
+  screening: ['worldbank','yahoo','fx','coingecko','bi','rss'],
+  dividen: ['yahoo'],
+  profil: ['db'],
+  membership: ['affiliate','db']
+};

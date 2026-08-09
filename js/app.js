@@ -77,6 +77,8 @@ const App = {
     const el = document.getElementById('app');
     el.innerHTML = '';
     try{ route.render(el); }catch(e){ el.innerHTML = `<div class="alert bad">Terjadi kesalahan: ${U.esc(e.message)}</div>`; console.error(e); }
+    // Strip integrasi otomatis di atas setiap menu
+    try{ const bar = IntegrasiUI.render(name); if(bar) el.insertAdjacentHTML('afterbegin', bar); }catch(e){}
     window.scrollTo(0,0);
     // Data bersama (feed, grup, komisi) diambil ulang dari server saat masuk halaman terkait
     if(['social','membership','dashboard'].includes(name) && !this._refreshing){
@@ -112,5 +114,83 @@ const App = {
     if(gate) gate.style.display = 'none';
     this.refreshChrome();
     this.navigate();
+  }
+};
+
+/* ========== IntegrasiUI — strip status integrasi di SETIAP menu ==========
+ * Menampilkan provider yang menyuplai modul aktif: status live (jam ambil
+ * dari cache), mode autopilot (TTL), tombol uji koneksi, sumber resmi.
+ */
+const IntegrasiUI = {
+  cacheTime(prefix){
+    let latest = 0;
+    for(const k of Object.keys(localStorage)){
+      if(k.startsWith('ghubc_' + prefix)){
+        try{ const t = JSON.parse(localStorage.getItem(k)).t; if(t > latest) latest = t; }catch(e){}
+      }
+    }
+    return latest || null;
+  },
+  PROV: {
+    yahoo:    { nama:'Yahoo Finance', ket:'±900 emiten IDX · harga/riwayat/dividen', pre:'y_',  ttl:'autopilot: harga 3 mnt · riwayat 6 jam', test:()=>API.quote('^JKSE') },
+    coingecko:{ nama:'CoinGecko', ket:'17rb+ kripto + emas PAXG', pre:'cg', ttl:'autopilot: 3 mnt', test:()=>API.cryptoGold() },
+    fx:       { nama:'ExchangeRate-API', ket:'160+ mata uang', pre:'fx', ttl:'autopilot: 30 mnt', test:()=>API.fx() },
+    worldbank:{ nama:'World Bank', ket:'1.400+ indikator makro RI', pre:'wb_', ttl:'autopilot: 24 jam', test:()=>API.worldBank('FP.CPI.TOTL.ZG','Inflasi') },
+    rss:      { nama:'RSS CNBC/ANTARA', ket:'berita asli tertaut', pre:'rss_', ttl:'autopilot: 15 mnt', test:()=>API.news() },
+    ump:      { statis:true, nama:'UMP 2026 — Kemnaker', ket:'PP 49/2025 · berlaku ' + UMP2026.meta.berlaku, url: UMP2026.meta.url },
+    bi:       { statis:true, nama:'BI-Rate ' + BI_RATE.rate + '%', ket: BI_RATE.rdg, url: BI_RATE.url },
+    bpjs:     { statis:true, nama:'Iuran BPJS Kesehatan', ket:'Perpres 64/2020 (resmi)', url: BPJS.url },
+    bps:      { statis:true, nama:'Biaya pendidikan — BPS', ket: 'Statistik Pendidikan + Permendikbud 1/2021', url: JENJANG_SRC.url },
+    sbn:      { statis:true, nama:'Kupon SBN Ritel — Kemenkeu', ket:'acuan imbal hasil rendah-risiko', url:'https://www.kemenkeu.go.id/sbnritel' },
+    ojkmarket:{ statis:true, nama:'Marketplace asuransi berizin OJK', ket:'cek premi realtime (Lifepal/Qoala/PasarPolis)', url:'https://ojk.go.id/id/kanal/iknb/data-dan-statistik/direktori/asuransi/default.aspx' },
+    marketplaces:{ statis:true, nama: MARKETPLACES.length + ' marketplace global', ket:'Shopee·Tokopedia·Lazada·Blibli·Amazon·AliExpress·eBay (jutaan produk)', url:'#' }
+  },
+  chip(id){
+    const P = this.PROV[id];
+    if(id === 'db'){
+      const on = typeof Store !== 'undefined' && Store.me;
+      return `<span class="int-chip ${on?'on':''}" title="Semua data modul ini tersimpan di database SQLite server per akun">
+        ${on?'🟢':'⚪'} <b>Database server</b> · ${on ? 'tersinkron @' + U.esc(Store.me.username) : 'belum login'} · autopilot sync 350ms</span>`;
+    }
+    if(id === 'affiliate'){
+      const st = (typeof Store !== 'undefined' && Store.get('settings', {})) || {};
+      const nNet = ((st.affiliate||{}).networks || []).length;
+      return `<span class="int-chip on" title="Klik=statistik Rp0. Komisi hanya dari pembelian terverifikasi via postback S2S jaringan afiliasi.">
+        🟢 <b>Mesin afiliasi eksternal</b> · bagi hasil ${Math.round(KOMISI.produkUser*100)}/${100-Math.round(KOMISI.produkUser*100)} · postback S2S aktif${nNet?` · ${nNet} template deeplink`:''}</span>`;
+    }
+    if(!P) return '';
+    if(P.statis){
+      return `<a class="int-chip on" href="${P.url}" target="_blank" rel="noopener" title="Ketetapan/publikasi resmi — tertaut sumbernya">
+        📎 <b>${P.nama}</b> · ${P.ket}</a>`;
+    }
+    const t = this.cacheTime(P.pre);
+    return `<span class="int-chip ${t?'on':''}" onclick="IntegrasiUI.test('${id}')" title="${P.ttl}. Klik untuk uji koneksi sekarang.">
+      ${t?'🟢':'⚪'} <b>${P.nama}</b> · ${P.ket} · ${t ? 'data ' + U.time(new Date(t).toISOString()) : 'siap — klik utk uji'}</span>`;
+  },
+  render(route){
+    const ids = (typeof MODUL_INTEGRASI !== 'undefined') && MODUL_INTEGRASI[route];
+    if(!ids || !ids.length) return '';
+    return `<div class="int-bar" id="intBar" data-route="${route}">
+      <span class="int-title">🔌 Integrasi modul ini</span>
+      ${ids.map(id=>this.chip(id)).join('')}
+    </div>`;
+  },
+  refreshBar(){
+    const bar = document.getElementById('intBar');
+    if(!bar) return;
+    const route = bar.dataset.route;
+    bar.outerHTML = this.render(route);
+  },
+  async test(id){
+    const P = this.PROV[id];
+    if(!P || !P.test) return;
+    Toast.show('Menguji ' + P.nama + '…');
+    try{
+      await P.test();
+      Toast.show('✔ ' + P.nama + ' terhubung — data asli diterima');
+    }catch(e){
+      Toast.show('✕ ' + P.nama + ' gagal: ' + e.message);
+    }
+    this.refreshBar();
   }
 };
