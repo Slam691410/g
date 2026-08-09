@@ -473,3 +473,74 @@ Admin.savePass = async ()=>{
     Toast.show('Password admin diganti 🔑');
   }catch(e){ Toast.show(e.message); }
 };
+
+/* ================= REGISTRI INTEGRASI PIHAK KETIGA =================
+ * Transparansi penuh: apa yang benar-benar terhubung, apa yang siap
+ * dihubungkan (butuh pendaftaran sekali), dan apa yang belum dibangun.
+ */
+const INTEGRASI = {
+  aktif: [ // terhubung & dipakai LIVE sekarang, tanpa API key
+    { n:'Yahoo Finance', cakupan:'±900 emiten IDX + indeks + komoditas dunia (harga, riwayat, dividen)', mode:'Autopilot — cache 3 mnt (harga) / 6 jam (riwayat & dividen)', via:'relay server / fallback browser' },
+    { n:'CoinGecko API', cakupan:'17.000+ aset kripto + emas tokenized (PAXG) dalam USD/IDR', mode:'Autopilot — cache 3 mnt', via:'langsung (CORS resmi)' },
+    { n:'ExchangeRate-API', cakupan:'160+ mata uang dunia (kurs USD/IDR dll)', mode:'Autopilot — cache 30 mnt', via:'langsung (CORS resmi)' },
+    { n:'World Bank Open Data', cakupan:'1.400+ indikator makro resmi Indonesia (PDB, inflasi, pengangguran, CA)', mode:'Autopilot — cache 24 jam', via:'langsung (CORS resmi)' },
+    { n:'RSS CNBC Indonesia', cakupan:'Berita market & ekonomi (artikel asli tertaut)', mode:'Autopilot — cache 15 mnt', via:'relay/proxy' },
+    { n:'RSS ANTARA Ekonomi', cakupan:'Berita ekonomi kantor berita nasional', mode:'Autopilot — cadangan otomatis bila CNBC gagal', via:'relay/proxy' }
+  ],
+  siap: [ // infrastruktur SUDAH jadi (deeplink+subid+postback), tinggal daftar publisher SEKALI per jaringan
+    { n:'Involve Asia', buka:'Shopee, Lazada, Tokopedia, Zalora, dll (ribuan merchant Asia)', aksi:'Daftar publisher (review ±1–3 hari) → isi aff_id di template deeplink' },
+    { n:'ACCESSTRADE Indonesia', buka:'Ratusan merchant lokal ID', aksi:'Daftar publisher → template deeplink' },
+    { n:'Amazon Associates', buka:'Ratusan juta produk Amazon global', aksi:'Daftar → tag afiliasi' },
+    { n:'AliExpress Portals', buka:'100+ juta produk AliExpress', aksi:'Daftar → tracking ID' },
+    { n:'eBay Partner Network', buka:'1+ miliar listing eBay', aksi:'Daftar → campaign ID' },
+    { n:'Impact / CJ / Rakuten / Awin', buka:'Puluhan ribu brand global', aksi:'Daftar per jaringan' },
+    { n:'Sovrn Commerce (Skimlinks)', buka:'48.000+ merchant — AUTO-monetize semua link, merchant baru otomatis ikut', aksi:'Daftar sekali → paling dekat dgn "autopilot penuh"' }
+  ],
+  belum: [ // jujur: belum dibangun / belum terhubung
+    { n:'Payment gateway (Midtrans/Xendit/Stripe)', ket:'Pembayaran membership & langganan grup saat ini dicatat di ledger tanpa tagihan uang nyata' },
+    { n:'Payout/disbursement komisi ke rekening pengguna', ket:'Saldo komisi tercatat; pencairan otomatis butuh gateway disbursement + KYC' },
+    { n:'Scraper UMP/BPS otomatis tahunan', ket:'UMP 2026 tertanam dari sumber resmi; pembaruan tahunan masih manual (atau tambah scheduled scraper di produksi)' },
+    { n:'API premium asuransi realtime', ket:'Tidak ada API publik premi asuransi ID; saat ini estimator + tautan marketplace berizin OJK' }
+  ]
+};
+
+Admin.register('integrasi', 'Integrasi Pihak Ketiga', function(el){
+  const st = Store.get('settings', {}) || {};
+  const nets = ((st.affiliate||{}).networks || []);
+  el.innerHTML = `
+    <div class="grid g4 mb">
+      <div class="stat"><div class="lbl">Integrasi data LIVE</div><div class="val up">${INTEGRASI.aktif.length}</div><div class="d sub">tanpa API key, autopilot</div></div>
+      <div class="stat"><div class="lbl">Jaringan afiliasi siap-hubung</div><div class="val" style="color:var(--yel)">${INTEGRASI.siap.length}</div><div class="d sub">${nets.length} template deeplink terpasang</div></div>
+      <div class="stat"><div class="lbl">Cakupan via 1 login agregator</div><div class="val">ribuan</div><div class="d sub">merchant → jutaan produk</div></div>
+      <div class="stat"><div class="lbl">Belum terhubung</div><div class="val down">${INTEGRASI.belum.length}</div><div class="d sub">lihat daftar jujur di bawah</div></div>
+    </div>
+
+    <div class="alert info mb">
+      <b>Prinsip arsitektur: hub-and-spoke, bukan "ratusan integrasi satu-satu".</b><br>
+      1 integrasi Yahoo Finance = ±900 emiten IDX + bursa dunia · 1 CoinGecko = 17.000+ aset · 1 World Bank = 1.400+ indikator ·
+      1 pendaftaran agregator afiliasi = ribuan merchant (jutaan produk). Total pihak ketiga yang perlu dikelola tetap belasan — itulah desain yang benar agar sistem tetap autopilot & murah perawatan.
+    </div>
+
+    <div class="card mb" style="overflow-x:auto">
+      <h3>🟢 Terhubung LIVE sekarang (${INTEGRASI.aktif.length})</h3>
+      <table>
+        <tr><th>Provider</th><th>Cakupan lewat 1 integrasi</th><th>Mode</th><th>Jalur</th></tr>
+        ${INTEGRASI.aktif.map(i=>`<tr><td><b>${i.n}</b></td><td>${i.cakupan}</td><td><span class="badge b-grn">${i.mode}</span></td><td class="hint">${i.via}</td></tr>`).join('')}
+      </table>
+      <div class="hint mt">Uji langsung semuanya di menu <a href="#/sumber">📡 Sumber Data</a>. "Autopilot" = browser/relay mengambil ulang otomatis saat cache kedaluwarsa — tanpa campur tangan admin.</div>
+    </div>
+
+    <div class="card mb" style="overflow-x:auto">
+      <h3>🟡 Afiliasi eksternal — infrastruktur JADI, tinggal daftar sekali per jaringan (${INTEGRASI.siap.length})</h3>
+      <table>
+        <tr><th>Jaringan</th><th>Yang terbuka setelah 1 pendaftaran</th><th>Aksi sekali</th></tr>
+        ${INTEGRASI.siap.map(i=>`<tr><td><b>${i.n}</b></td><td>${i.buka}</td><td class="hint">${i.aksi}</td></tr>`).join('')}
+      </table>
+      <div class="hint mt">Setelah disetujui: tempel <b>aff_id</b> ke template deeplink & daftarkan <b>URL postback</b> (menu Pengaturan) → sejak itu <b>100% autopilot</b>: link pengguna terbungkus otomatis + Sub-ID, konversi terverifikasi masuk sendiri via postback, payout terbagi 70/30 otomatis, anti-duplikat order_id.</div>
+    </div>
+
+    <div class="card">
+      <h3>🔴 Jujur: belum terhubung / belum dibangun (${INTEGRASI.belum.length})</h3>
+      ${INTEGRASI.belum.map(i=>`<div class="alert warn mts"><b>${i.n}</b><br><span class="hint">${i.ket}</span></div>`).join('')}
+    </div>`;
+});
