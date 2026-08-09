@@ -147,3 +147,6 @@ tr:hover td{background:rgba(91,140,255,.04)}
 .int-chip b{color:var(--txt);font-weight:700}
 .int-chip.on{border-color:rgba(47,216,130,.35)}
 .int-chip:hover{border-color:var(--pri);color:var(--txt)}
+/* AI floating button */
+.ai-fab{position:fixed;right:22px;bottom:22px;z-index:80;width:52px;height:52px;border-radius:50%;border:1px solid rgba(169,122,255,.5);background:linear-gradient(135deg,var(--pur),var(--pri));font-size:24px;cursor:pointer;box-shadow:0 8px 24px rgba(91,140,255,.35);transition:.2s}
+.ai-fab:hover{transform:scale(1.08)}

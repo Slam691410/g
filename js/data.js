@@ -245,10 +245,10 @@ try{
  * live/cache, mode autopilot, dan tautan sumber resmi.
  */
 const MODUL_INTEGRASI = {
-  dashboard: ['yahoo','coingecko','fx','rss','db'],
+  dashboard: ['yahoo','coingecko','fx','rss','ai','db'],
   social: ['affiliate','marketplaces','db'],
   project: ['db'],
-  income: ['yahoo','coingecko','fx','db'],
+  income: ['yahoo','coingecko','fx','blockchain','ai','db'],
   khl: ['ump','khl','worldbank','bps','db'],
   proteksi: ['bpjs','ojkmarket','db'],
   invest: ['sbn','yahoo','db'],

@@ -72,7 +72,8 @@ const Income = {
    * (properti, deposito, SBN) dihitung otomatis dgn akrual/indeksasi. */
   JENIS: {
     saham:     { nama:'📈 Saham IDX', unit:'lembar', hint:'Kode emiten (BBCA, TLKM…) — harga live Yahoo Finance' },
-    kripto:    { nama:'🪙 Kripto', unit:'koin', hint:'Id CoinGecko: bitcoin, ethereum, solana, tether…' },
+    kripto:    { nama:'🪙 Kripto (exchange)', unit:'koin', hint:'Id CoinGecko: bitcoin, ethereum, solana, tether…' },
+    wallet:    { nama:'⛓ Wallet On-Chain (blockchain)', unit:'koin (auto dari blockchain)', hint:'Masukkan alamat — saldo dibaca LANGSUNG dari blockchain publik: BTC via Blockstream, ETH via Cloudflare JSON-RPC. Autopilot penuh.' },
     logam:     { nama:'🥇 Logam Mulia', unit:'gram', hint:'Emas / Perak / Platinum / Palladium — harga dunia live (PAXG & Yahoo futures) per gram' },
     valas:     { nama:'💵 Valas', unit:'unit mata uang', hint:'Kode ISO: USD, EUR, SGD, JPY, SAR… (160+ mata uang, kurs live)' },
     sbn:       { nama:'🏛 SBN / Obligasi Ritel', unit:'Rp nominal', hint:'ORI/SR/ST/FR — nilai = nominal + akrual kupon berjalan (otomatis)' },
@@ -107,6 +108,11 @@ const Income = {
       kripto: `<div class="grid g2"><div><label class="fl">Id CoinGecko</label><input id="hKode" placeholder="bitcoin"></div>
         <div><label class="fl">Jumlah koin</label><input id="hQty" type="number" step="any"></div></div>
         <label class="fl">Harga beli rata²/koin (Rp)</label><input id="hAvg" type="number" step="any">`,
+      wallet: `<div class="grid g2"><div><label class="fl">Jaringan blockchain</label>
+        <select id="hSub"><option value="BTC">Bitcoin (Blockstream)</option><option value="ETH">Ethereum (Cloudflare RPC)</option></select></div>
+        <div><label class="fl">Modal beli total (Rp, opsional)</label><input id="hAvg" type="number"></div></div>
+        <label class="fl">Alamat wallet publik</label><input id="hX3" placeholder="bc1q… / 0x…">
+        <div class="hint mts">⛓ Hanya alamat publik (read-only) — sistem TIDAK pernah meminta private key/seed phrase. Saldo & nilai diperbarui otomatis dari blockchain.</div>`,
       logam: `<div class="grid g2"><div><label class="fl">Jenis logam</label>
         <select id="hSub">${Object.entries(this.LOGAM).map(([k,v])=>`<option value="${k}">${v.lbl}</option>`).join('')}</select></div>
         <div><label class="fl">Berat (gram)</label><input id="hQty" type="number" step="any"></div></div>
@@ -147,13 +153,14 @@ const Income = {
   submitHold(){
     const jenis = document.getElementById('hJenis').value;
     const g = id => { const e = document.getElementById(id); return e ? e.value : ''; };
-    const kode = (g('hKode') || (jenis==='logam' ? g('hSub') : '')).trim();
-    const qty = Number(g('hQty'));
-    if((jenis!=='logam' && !kode) || !qty) return Toast.show('Lengkapi data aset');
+    const kode = (g('hKode') || (['logam','wallet'].includes(jenis) ? g('hSub') : '')).trim();
+    const qty = jenis==='wallet' ? 1 : Number(g('hQty'));
+    if(jenis==='wallet' && !g('hX3').trim()) return Toast.show('Alamat wallet wajib diisi');
+    if((jenis!=='logam' && jenis!=='wallet' && !kode) || !qty) return Toast.show('Lengkapi data aset');
     const hs = this.holds();
     hs.push({ id: U.uid(), jenis, kode: jenis==='logam' ? g('hSub') : kode.toUpperCase(),
-      label: jenis==='logam' ? this.LOGAM[g('hSub')].lbl : kode,
-      qty, avg: Number(g('hAvg'))||0, x1: Number(g('hX1'))||0, x2: g('hX2')||'' });
+      label: jenis==='logam' ? this.LOGAM[g('hSub')].lbl : (jenis==='wallet' ? g('hSub')+' '+g('hX3').trim().slice(0,10)+'…' : kode),
+      qty, avg: Number(g('hAvg'))||0, x1: Number(g('hX1'))||0, x2: g('hX2')||'', addr: g('hX3')||'' });
     this.saveHolds(hs); Modal.close(); Toast.show('Aset tersimpan ✔'); App.navigate();
   },
   editNab(id){
@@ -174,6 +181,11 @@ const Income = {
       if(h.jenis==='saham'){ const q = await API.quote(h.kode + '.JK'); return { v: q.price*h.qty, m: h.avg*h.qty, src: 'Yahoo Finance ' + U.time(q.fetchedAt), unit: q.price }; }
       if(h.jenis==='kripto'){ const d = ctx.cg.data[h.kode.toLowerCase()]; if(!d) throw new Error('id CoinGecko tidak dikenal');
         return { v: d.idr*h.qty, m: h.avg*h.qty, src: 'CoinGecko ' + U.time(ctx.cg.fetchedAt), unit: d.idr }; }
+      if(h.jenis==='wallet'){
+        const bal = h.kode==='BTC' ? await API.btcBalance(h.addr) : await API.ethBalance(h.addr);
+        const price = h.kode==='BTC' ? ctx.cg.data.bitcoin.idr : ctx.cg.data.ethereum.idr;
+        h.qtyLive = bal.coin;
+        return { v: bal.coin * price, m: h.avg||0, src: `⛓ ${bal.source} · ${U.num(bal.coin,6)} ${h.kode} on-chain ${U.time(bal.fetchedAt)}`, unit: price }; }
       if(h.jenis==='logam'){
         if(h.kode==='emas'){ const gpg = ctx.cg.data['pax-gold'].idr / t.OZ; return { v: gpg*h.qty, m: h.avg*h.qty, src: 'CoinGecko PAXG/gram ' + U.time(ctx.cg.fetchedAt), unit: gpg }; }
         const sym = t.LOGAM[h.kode].sym;
@@ -261,7 +273,7 @@ App.register('income', 'Income', function(el){
       const hs = Income.holds();
       const box = document.getElementById('holdTable');
       try{
-        const needCg = hs.some(h=>h.jenis==='kripto' || (h.jenis==='logam'&&h.kode==='emas'));
+        const needCg = hs.some(h=>['kripto','wallet'].includes(h.jenis) || (h.jenis==='logam'&&h.kode==='emas'));
         const needFx = hs.some(h=>['valas'].includes(h.jenis) || (h.jenis==='logam'&&h.kode!=='emas'));
         const [cg, fx] = await Promise.all([
           needCg ? API.cryptoGold() : null,
@@ -288,7 +300,7 @@ App.register('income', 'Income', function(el){
           <tr><th>Aset</th><th class="num">Unit</th><th class="num">Harga/unit</th><th class="num">Nilai kini</th><th class="num">±</th><th>Metode & sumber</th><th></th></tr>
           ${rows.map(({h,r})=>`<tr>
             <td><b>${U.esc(h.label||h.kode)}</b><div class="hint">${Income.JENIS[h.jenis].nama}</div></td>
-            <td class="num">${U.num(h.qty)}</td>
+            <td class="num">${U.num(h.qtyLive!=null?h.qtyLive:h.qty, h.jenis==='wallet'?6:2)}${h.jenis==='wallet'?' <span class="hint">on-chain</span>':''}</td>
             <td class="num">${r.unit!=null?U.rp(r.unit,2):'—'}</td>
             <td class="num"><b>${r.v!=null?U.rp(r.v):'—'}</b></td>
             <td class="num ${r.v-r.m>=0?'up':'down'}">${r.m&&r.v!=null?U.num((r.v-r.m)/r.m*100,1)+'%':'—'}</td>

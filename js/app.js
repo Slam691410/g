@@ -146,7 +146,9 @@ const IntegrasiUI = {
     marketplaces:{ statis:true, nama: MARKETPLACES.length + ' marketplace global', ket:'Shopee·Tokopedia·Lazada·Blibli·Amazon·AliExpress·eBay (jutaan produk)', url:'#' },
     khl:      { statis:true, nama:'KHL — Permenaker 18/2020', ket:'7 kelompok · 64 komponen (terpisah dari UMP)', url: (typeof KHL_PERMENAKER!=='undefined') ? KHL_PERMENAKER.url : '#' },
     gnews:    { nama:'Google News (agregat)', ket:'himpun berita ribuan media per emiten + pindai risiko', pre:'rss_https://news.google', ttl:'autopilot: 15 mnt per kueri', test:()=>API.gnews('IHSG saham') },
-    blacklist:{ statis:true, nama:'Registri Entitas Bermasalah', ket:(typeof ENTITAS_BERMASALAH!=='undefined'?ENTITAS_BERMASALAH.length:0) + ' entitas lintas-emiten → auto-EXCLUDE', url:'https://news.google.com/search?q=jiwasraya%20asabri%20terpidana&hl=id' }
+    blacklist:{ statis:true, nama:'Registri Entitas Bermasalah', ket:(typeof ENTITAS_BERMASALAH!=='undefined'?ENTITAS_BERMASALAH.length:0) + ' entitas lintas-emiten → auto-EXCLUDE', url:'https://news.google.com/search?q=jiwasraya%20asabri%20terpidana&hl=id' },
+    blockchain:{ nama:'Blockchain publik', ket:'saldo on-chain: BTC (Blockstream) · ETH (Cloudflare RPC)', pre:'bc_', ttl:'autopilot: 5 mnt', test:()=>API.btcBalance('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa') },
+    ai:{ custom:true }
   },
   chip(id){
     const P = this.PROV[id];
@@ -160,6 +162,11 @@ const IntegrasiUI = {
       const nNet = ((st.affiliate||{}).networks || []).length;
       return `<span class="int-chip on" title="Klik=statistik Rp0. Komisi hanya dari pembelian terverifikasi via postback S2S jaringan afiliasi.">
         🟢 <b>Mesin afiliasi eksternal</b> · bagi hasil ${Math.round(KOMISI.produkUser*100)}/${100-Math.round(KOMISI.produkUser*100)} · postback S2S aktif${nNet?` · ${nNet} template deeplink`:''}</span>`;
+    }
+    if(id === 'ai'){
+      const hasKey = !!(JSON.parse(localStorage.getItem('ghub_ai_cfg')||'{}').key);
+      return `<span class="int-chip on" onclick="AI.open()" title="Analisis heuristik lokal (privasi penuh) + LLM generatif opsional (BYO key)">
+        🤖 <b>AI Asisten</b> · heuristik lokal aktif${hasKey?' · LLM tersambung':' · LLM opsional (BYO key)'}</span>`;
     }
     if(!P) return '';
     if(P.statis){

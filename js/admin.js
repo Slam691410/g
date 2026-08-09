@@ -559,3 +559,94 @@ Admin.register('integrasi', 'Integrasi Pihak Ketiga', function(el){
       </table>
     </div>`;
 });
+
+/* ================= DIAGNOSTIK — self-test seluruh fitur + mitigasi ================= */
+Admin.register('diagnostik', 'Diagnostik Sistem', function(el){
+  el.innerHTML = `
+    <div class="card mb">
+      <div class="row between wrap">
+        <div><h3 style="margin:0">🩺 Diagnostik Menyeluruh</h3>
+        <div class="hint mts">Menguji NYATA setiap lapisan: server+database, endpoint bisnis tiap menu, sumber data eksternal, blockchain, mesin afiliasi — lengkap dgn mitigasi bila gagal.</div></div>
+        <button class="btn" onclick="Admin.runDiag()">▶ Jalankan semua tes</button>
+      </div>
+    </div>
+    <div class="card" style="overflow-x:auto"><table id="diagTable">
+      <tr><th>#</th><th>Uji</th><th>Menu terkait</th><th>Status</th><th>Hasil / Mitigasi</th></tr>
+    </table></div>`;
+});
+Admin.DIAG = [
+  { n:'Server hidup + sesi admin', menu:'Semua', run: async ()=>{ const r = await Store.api('/api/me'); return 'login sebagai @' + r.user.username + ' (' + r.user.role + ')'; },
+    fix:'Jalankan ulang: node server.js — cek port 8000 tidak bentrok.' },
+  { n:'Database tulis→baca (roundtrip SQLite)', menu:'Semua data pengguna', run: async ()=>{
+      const v = 'diag-' + Date.now();
+      await Store.api('/api/data/user/diag_test', { method:'PUT', body:{ value:v } });
+      const d = await Store.api('/api/data');
+      if(d.user.diag_test !== v) throw new Error('nilai tidak persisten');
+      return 'tulis & baca konsisten (kv_user)'; },
+    fix:'Cek file data/ghub.sqlite writable & disk tidak penuh; restart server.' },
+  { n:'Koleksi bersama (posts/groups/ledger)', menu:'Sosial Hub · Membership', run: async ()=>{
+      const d = await Store.api('/api/data');
+      return `${d.shared.posts.length} post · ${d.shared.groups.length} grup · ${d.shared.ledger.length} entri ledger`; },
+    fix:'Bila kosong padahal ada data: cek migrasi tabel di log server.' },
+  { n:'Endpoint bisnis: statistik admin', menu:'Panel Admin', run: async ()=>{
+      const s = await Store.api('/api/admin/stats');
+      return `${s.totalUser} user · ${s.memberAktif} member aktif · ${s.klik} klik · ${s.sesiAktif} sesi`; },
+    fix:'Pastikan akun ini role=admin; login ulang bila sesi kadaluarsa.' },
+  { n:'Deeplink builder (pembungkus afiliasi)', menu:'Sosial Hub', run: async ()=>{
+      const r = await fetch('/api/deeplink?url=' + encodeURIComponent('https://shopee.co.id/tes') + '&subid=DIAG'); const j = await r.json();
+      if(!r.ok) throw new Error(j.error); return j.wrapped ? 'terbungkus via template: ' + j.network : 'fallback URL asli (belum ada template — wajar sebelum daftar jaringan)'; },
+    fix:'Isi template deeplink di Pengaturan → Afiliasi Eksternal setelah disetujui jaringan.' },
+  { n:'Kunci postback afiliasi tersedia', menu:'Membership · Sosial Hub', run: async ()=>{
+      const st = Store.get('settings', {}) || {};
+      if(!st.affiliate || !st.affiliate.postbackKey) throw new Error('kunci belum dibuat');
+      return 'kunci siap (' + st.affiliate.postbackKey.slice(0,6) + '…) — daftarkan URL postback ke jaringan'; },
+    fix:'Buka Pengaturan → kunci dibuat otomatis oleh server saat settings dibaca.' },
+  { n:'Yahoo Finance (saham/IHSG/dividen/logam)', menu:'Screening · Dividen · Income · Dashboard', run: async ()=>{ const q = await API.quote('^JKSE'); return 'IHSG ' + U.num(q.price,0) + ' (' + U.num(q.chgPct,2) + '%)'; },
+    fix:'Bergantung relay/proxy CORS — coba Kosongkan cache (menu Sumber Data) lalu uji ulang; di produksi aktifkan /api/relay.' },
+  { n:'CoinGecko (kripto & emas PAXG)', menu:'Income · Dashboard · KHL (nisab zakat)', run: async ()=>{ const c = await API.cryptoGold(); return 'BTC $' + U.num(c.data.bitcoin.usd,0) + ' · PAXG $' + U.num(c.data['pax-gold'].usd,0); },
+    fix:'Rate limit CoinGecko 10-30 req/mnt — cache 3 mnt sudah melindungi; tunggu 1 menit.' },
+  { n:'Kurs valas (160+ mata uang)', menu:'Income · Screening', run: async ()=>{ const f = await API.fx(); return 'USD/IDR ' + U.num(f.rates.IDR,0); },
+    fix:'Fallback: open.er-api.com gratis tanpa key; cek koneksi.' },
+  { n:'World Bank (makro resmi)', menu:'Screening · KHL (inflasi)', run: async ()=>{ const w = await API.worldBank('FP.CPI.TOTL.ZG','Inflasi'); return 'Inflasi ' + U.num(w.value,2) + '% (data ' + w.year + ')'; },
+    fix:'API resmi tanpa key — bila gagal, cek koneksi/firewall.' },
+  { n:'Berita RSS (CNBC/ANTARA/detik)', menu:'Dashboard · Screening', run: async ()=>{ const n = await API.news(); return n.items.length + ' artikel · ' + n.source; },
+    fix:'3 feed fallback berantai — bila semua gagal, relay/proxy CORS sedang down; coba lagi.' },
+  { n:'Intel Google News (himpun berita per emiten)', menu:'Screening (riset 🕵️)', run: async ()=>{ const g = await API.gnews('BBCA saham'); const s = API.riskScan(g.items); return g.items.length + ' artikel terhimpun · ' + s.risk.length + ' berindikasi risiko'; },
+    fix:'Google News RSS via relay/proxy — sama dgn mitigasi RSS.' },
+  { n:'⛓ Blockchain BTC (Blockstream)', menu:'Income (wallet on-chain)', run: async ()=>{ const b = await API.btcBalance('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'); return 'alamat genesis Satoshi: ' + U.num(b.coin,4) + ' BTC on-chain ✔'; },
+    fix:'Blockstream API publik CORS — bila gagal, coba lagi / ganti explorer (mempool.space).' },
+  { n:'⛓ Blockchain ETH (Cloudflare RPC)', menu:'Income (wallet on-chain)', run: async ()=>{ const b = await API.ethBalance('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'); return 'vitalik.eth: ' + U.num(b.coin,3) + ' ETH on-chain ✔'; },
+    fix:'JSON-RPC publik Cloudflare — bila gagal, ganti RPC (publicnode.com, llamarpc).' },
+  { n:'Registri blacklist lintas-emiten', menu:'Screening', run: async ()=>{
+      const h = blacklistHits('WSKT'); if(!h.length) throw new Error('registri kosong');
+      return ENTITAS_BERMASALAH.length + ' entitas · uji WSKT → ' + h.length + ' temuan → EXCLUDED ✔'; },
+    fix:'Registri di js/data.js — tambah entitas baru berdasarkan putusan/pemberitaan terdokumentasi.' },
+  { n:'🤖 AI heuristik lokal', menu:'Semua (tombol 🤖)', run: async ()=>{ const n = AI.localInsights().length; if(!n) throw new Error('tidak menghasilkan insight'); return n + ' insight dihasilkan dari data lokal ✔'; },
+    fix:'Modul js/ai.js — pastikan termuat (cek konsol browser).' },
+  { n:'Cache autopilot (TTL)', menu:'Semua data eksternal', run: async ()=>{
+      const n = Object.keys(localStorage).filter(k=>k.startsWith('ghubc_')).length;
+      return n + ' entri cache aktif — refresh otomatis saat TTL habis (3 mnt–24 jam)'; },
+    fix:'Kosongkan via menu Sumber Data bila data terasa basi.' }
+];
+Admin.runDiag = async ()=>{
+  const tb = document.getElementById('diagTable');
+  // reset baris
+  [...tb.querySelectorAll('tr')].slice(1).forEach(r=>r.remove());
+  let pass = 0;
+  for(let i = 0; i < Admin.DIAG.length; i++){
+    const d = Admin.DIAG[i];
+    const row = tb.insertRow(-1);
+    row.innerHTML = `<td>${i+1}</td><td><b>${d.n}</b></td><td class="hint">${d.menu}</td><td><span class="badge b-yel">menguji…</span></td><td class="hint">—</td>`;
+    try{
+      const res = await d.run();
+      row.cells[3].innerHTML = '<span class="badge b-grn">✔ LULUS</span>';
+      row.cells[4].innerHTML = res;
+      pass++;
+    }catch(e){
+      row.cells[3].innerHTML = '<span class="badge b-red">✕ GAGAL</span>';
+      row.cells[4].innerHTML = '<span class="down">' + U.esc(e.message) + '</span><br><span class="hint">🛠 Mitigasi: ' + d.fix + '</span>';
+    }
+  }
+  const sum = tb.insertRow(-1);
+  sum.innerHTML = `<td colspan="5"><div class="alert ${pass===Admin.DIAG.length?'ok':'warn'}"><b>${pass}/${Admin.DIAG.length} tes lulus.</b> ${pass===Admin.DIAG.length?'Semua menu terkoneksi penuh & autopilot 🎉':'Yang gagal disertai mitigasi di kolom kanan — umumnya soal jaringan/relay, coba uji ulang.'}</div></td>`;
+};

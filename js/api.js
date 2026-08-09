@@ -207,6 +207,32 @@ const API = {
     return await this.quote(symbol);
   },
 
+  /* ---------- BLOCKCHAIN publik: baca saldo on-chain langsung dari node/explorer ---------- */
+  async btcBalance(addr){
+    const { data, fetchedAt } = await this.get('https://blockstream.info/api/address/' + encodeURIComponent(addr),
+      { key: 'bc_btc_' + addr, ttlMin: 5 });
+    const s = data.chain_stats || {};
+    const sat = (s.funded_txo_sum || 0) - (s.spent_txo_sum || 0);
+    return { coin: sat / 1e8, fetchedAt, source: 'Blockstream (node Bitcoin publik)', sourceUrl: 'https://blockstream.info/address/' + addr };
+  },
+  async ethBalance(addr){
+    const ck = 'bc_eth_' + addr;
+    const hit = this.cacheGet(ck, 5 * 60000);
+    let wrapped = hit;
+    if(!wrapped){
+      const r = await fetch('https://cloudflare-eth.com', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_getBalance', params: [addr, 'latest'], id: 1 }) });
+      if(!r.ok) throw new Error('RPC HTTP ' + r.status);
+      const j = await r.json();
+      if(j.error) throw new Error(j.error.message);
+      wrapped = { data: j.result, fetchedAt: new Date().toISOString() };
+      this.cacheSet(ck, wrapped);
+    }
+    return { coin: parseInt(wrapped.data, 16) / 1e18, fetchedAt: wrapped.fetchedAt,
+      source: 'Cloudflare Ethereum RPC (JSON-RPC on-chain)', sourceUrl: 'https://etherscan.io/address/' + addr };
+  },
+
   /* ---------- Indikator teknikal ---------- */
   sma(arr, n){ const out = []; for(let i = 0; i < arr.length; i++){ if(i < n - 1){ out.push(null); continue; } let s = 0; for(let j = i - n + 1; j <= i; j++) s += arr[j]; out.push(s / n); } return out; },
   rsi(closes, n = 14){
