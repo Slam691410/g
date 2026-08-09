@@ -116,13 +116,16 @@ const Social = {
   },
   async joinGroup(id){
     const g = this.groups().find(x=>x.id===id); if(!g) return;
-    if(g.tipe==='langganan' && !(Store.me && g.ownerUser===Store.me.username)){
-      if(!confirm(`Berlangganan grup "${g.nama}" seharga ${U.rp(g.harga)}/bulan?`)) return;
-    }
     try{
+      if(g.tipe==='langganan' && !(Store.me && g.ownerUser===Store.me.username)){
+        if(!confirm(`Berlangganan grup "${g.nama}" seharga ${U.rp(g.harga)}/bulan?\n(100% ke kreator — dibayar via payment gateway)`)) return;
+        const r = await Store.api('/api/pay/create', { method:'POST', body:{ tipe:'grup', groupId: id } });
+        Toast.show(`Invoice ${U.rp(r.amount)} dibuat — menuju pembayaran…`);
+        setTimeout(()=>{ location.href = r.payUrl; }, 600);
+        return;
+      }
       await Store.api('/api/groups/' + id + '/join', { method:'POST' });
       await Store.refreshShared();
-      if(g.tipe==='langganan') Toast.show('Berlangganan aktif 1 bulan ✔ — komisi kreator & fee sistem dihitung server');
       App.navigate();
     }catch(e){ Toast.show(e.message); }
   },

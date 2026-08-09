@@ -4,13 +4,16 @@ const Member = {
     const plan = PLANS.find(p=>p.id===planId);
     const ref = (location.hash.split('ref=')[1]||'').slice(0,10);
     try{
-      const r = await Store.api('/api/membership/buy', { method:'POST', body:{ plan: planId, ref } });
-      Store.cache.user.membership = r.membership;
-      await Store.refreshShared();
-      App.refreshChrome();
-      Toast.show(planId==='free' ? 'Kembali ke paket Free' :
-        `Membership ${plan.nama} aktif s.d. ${U.dt(r.membership.expiry)} 🎉 (diproses server)`);
-      App.navigate();
+      if(planId === 'free'){
+        const r = await Store.api('/api/membership/buy', { method:'POST', body:{ plan:'free' } });
+        Store.cache.user.membership = r.membership;
+        App.refreshChrome(); Toast.show('Kembali ke paket Free'); App.navigate();
+        return;
+      }
+      // 💳 Paket berbayar → payment gateway: invoice server → bayar → webhook/simulasi → aktif otomatis
+      const r = await Store.api('/api/pay/create', { method:'POST', body:{ tipe:'membership', plan: planId, ref } });
+      Toast.show(`Invoice ${U.rp(r.amount)} dibuat (${r.provider}) — menuju pembayaran…`);
+      setTimeout(()=>{ location.href = r.payUrl; }, 600);
     }catch(e){ Toast.show(e.message); }
   },
   copyAff(){

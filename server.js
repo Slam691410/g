@@ -71,6 +71,10 @@ db.exec(`
     kode TEXT, user TEXT, jumlah INTEGER, status TEXT, detail TEXT, url TEXT, pair_id TEXT);
   CREATE TABLE IF NOT EXISTS clicks(
     id INTEGER PRIMARY KEY AUTOINCREMENT, kode TEXT, kanal TEXT, url TEXT, at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS invoices(
+    id TEXT PRIMARY KEY, at TEXT NOT NULL, user TEXT NOT NULL, tipe TEXT NOT NULL,
+    ref TEXT, amount INTEGER NOT NULL, provider TEXT, status TEXT NOT NULL DEFAULT 'pending',
+    pay_url TEXT, external TEXT, paid_at TEXT, detail TEXT);
 `);
 
 const now = () => new Date().toISOString();
@@ -147,7 +151,9 @@ function settings(){
   }
   return { komisi: Object.assign({}, DEFAULT_KOMISI, s.komisi || {}),
            plans: Object.assign({}, DEFAULT_PLANS, s.plans || {}),
-           affiliate: s.affiliate, raw: s };
+           affiliate: s.affiliate,
+           payment: Object.assign({ provider: 'simulasi', mode: 'sandbox', midtransServerKey: '', xenditKey: '', xenditCallbackToken: '' }, s.payment || {}),
+           raw: s };
 }
 function affCodeOf(uidNum){
   const m = kvUserGet(uidNum, 'membership') || {};
@@ -223,8 +229,81 @@ function sharedFor(user){
   const s = settings();
   const shared = { posts, groups, ledger: ledRows.map(rowLedger),
     settings: { komisi: s.komisi, plans: s.plans } };
-  if(user.role === 'admin') shared.settings.affiliate = s.affiliate; // kunci postback hanya utk admin
+  if(user.role === 'admin'){ shared.settings.affiliate = s.affiliate; shared.settings.payment = s.payment; } // rahasia hanya utk admin
   return shared;
+}
+
+/* ---------------- PEMBAYARAN: invoice → provider → webhook → fulfill ---------------- */
+function fulfillInvoice(invId, via){
+  const inv = db.prepare('SELECT * FROM invoices WHERE id=?').get(invId);
+  if(!inv) throw new Error('Invoice tidak ditemukan');
+  if(inv.status === 'paid') return inv;
+  const u = db.prepare('SELECT * FROM users WHERE username=?').get(inv.user);
+  if(!u) throw new Error('User invoice tidak ditemukan');
+  const S = settings();
+  const det = J(inv.detail, {});
+  if(inv.tipe === 'membership'){
+    const mem = kvUserGet(u.id, 'membership') || { plan: 'free', affCode: 'GH' + crypto.randomBytes(3).toString('hex').toUpperCase() };
+    const base = (mem.expiry && new Date(mem.expiry) > new Date() && mem.plan === inv.ref) ? new Date(mem.expiry) : new Date();
+    const exp = new Date(base); exp.setMonth(exp.getMonth() + 1);
+    mem.plan = inv.ref; mem.since = mem.since || now(); mem.expiry = exp.toISOString();
+    kvUserSet(u.id, 'membership', mem);
+    insertLedger({ tipe: 'membership', kanal: inv.ref, user: inv.user, kode: mem.affCode, jumlah: -inv.amount,
+      status: 'pembayaran LUNAS via ' + via, detail: `Invoice ${inv.id} — ${inv.ref} 1 bulan` });
+    if(det.refCode && det.refCode !== mem.affCode){
+      const owner = findUserByAffCode(det.refCode);
+      if(owner && owner.username !== inv.user)
+        insertLedger({ tipe: 'referral-membership', kanal: inv.ref, kode: det.refCode, user: owner.username,
+          jumlah: Math.round(inv.amount * S.komisi.membershipRef), status: 'komisi referral (pembayaran nyata)',
+          detail: `Referral @${inv.user} bayar ${inv.ref} via ${via}` });
+    }
+  } else if(inv.tipe === 'grup'){
+    const gr = db.prepare('SELECT * FROM groups WHERE id=?').get(inv.ref);
+    if(gr){
+      const g = rowGroup(gr);
+      const exp = new Date(); exp.setMonth(exp.getMonth() + 1);
+      g.subs.push({ by: inv.user, at: now(), until: exp.toISOString(), harga: inv.amount });
+      if(!g.members.includes(inv.user)) g.members.push(inv.user);
+      db.prepare('UPDATE groups SET members=?, subs=? WHERE id=?').run(JSON.stringify(g.members), JSON.stringify(g.subs), g.id);
+      insertLedger({ tipe: 'langganan-grup', kanal: g.nama, user: g.ownerUser || g.owner, jumlah: inv.amount,
+        status: 'pendapatan kreator (100%) — LUNAS via ' + via,
+        detail: `Langganan @${inv.user} bayar ${inv.amount.toLocaleString('id-ID')} via ${via} — penuh ke pembuat grup` });
+    }
+  }
+  db.prepare("UPDATE invoices SET status='paid', paid_at=? WHERE id=?").run(now(), invId);
+  return db.prepare('SELECT * FROM invoices WHERE id=?').get(invId);
+}
+
+async function createProviderPayment(inv, P){
+  // Adapter provider — dipanggil server-side (kunci tidak pernah ke browser)
+  if(P.provider === 'midtrans'){
+    const base = P.mode === 'production' ? 'https://app.midtrans.com' : 'https://app.sandbox.midtrans.com';
+    const r = await fetch(base + '/snap/v1/transactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json',
+        'Authorization': 'Basic ' + Buffer.from(P.midtransServerKey + ':').toString('base64') },
+      body: JSON.stringify({ transaction_details: { order_id: inv.id, gross_amount: inv.amount },
+        item_details: [{ id: inv.tipe, price: inv.amount, quantity: 1, name: 'GHub One — ' + inv.tipe + ' ' + (inv.ref||'') }],
+        customer_details: { first_name: inv.user } })
+    });
+    const j = await r.json();
+    if(!r.ok) throw new Error('Midtrans: ' + JSON.stringify(j.error_messages || j).slice(0, 150));
+    return { payUrl: j.redirect_url, external: j.token };
+  }
+  if(P.provider === 'xendit'){
+    const r = await fetch('https://api.xendit.co/v2/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json',
+        'Authorization': 'Basic ' + Buffer.from(P.xenditKey + ':').toString('base64') },
+      body: JSON.stringify({ external_id: inv.id, amount: inv.amount,
+        description: 'GHub One — ' + inv.tipe + ' ' + (inv.ref||''), currency: 'IDR' })
+    });
+    const j = await r.json();
+    if(!r.ok) throw new Error('Xendit: ' + (j.message || '').slice(0, 150));
+    return { payUrl: j.invoice_url, external: j.id };
+  }
+  // mode simulasi bawaan (utk demo/sandbox tanpa kunci)
+  return { payUrl: '/pay.html?inv=' + inv.id, external: 'SIM-' + inv.id };
 }
 
 /* ============================ API ROUTER ============================ */
@@ -326,6 +405,41 @@ async function api(req, res, url, ip){
     return send(res, 200, { ok: true, userShare, sysShare });
   }
 
+  /* ---------- PEMBAYARAN (publik: viewer invoice, simulasi, webhook provider) ---------- */
+  if((m = p.match(/^\/api\/pay\/invoice\/([a-z0-9]+)$/)) && req.method === 'GET'){
+    const inv = db.prepare('SELECT id,at,tipe,ref,amount,provider,status,paid_at FROM invoices WHERE id=?').get(m[1]);
+    if(!inv) return send(res, 404, { error: 'Invoice tidak ditemukan' });
+    return send(res, 200, { invoice: inv });
+  }
+  if((m = p.match(/^\/api\/pay\/simulate\/([a-z0-9]+)$/)) && req.method === 'POST'){
+    const S0 = settings();
+    if(S0.payment.provider !== 'simulasi') return send(res, 403, { error: 'Mode simulasi nonaktif — pembayaran via ' + S0.payment.provider });
+    try{ const inv = fulfillInvoice(m[1], 'SIMULASI'); return send(res, 200, { ok: true, status: inv.status }); }
+    catch(e){ return send(res, 400, { error: e.message }); }
+  }
+  if(p === '/api/pay/webhook/midtrans' && req.method === 'POST'){
+    const S0 = settings();
+    const b = await readBody(req);
+    const sig = crypto.createHash('sha512')
+      .update(String(b.order_id) + String(b.status_code) + String(b.gross_amount) + S0.payment.midtransServerKey)
+      .digest('hex');
+    if(sig !== b.signature_key) return send(res, 403, { error: 'Signature tidak valid' });
+    if(['capture','settlement'].includes(b.transaction_status)){
+      try{ fulfillInvoice(String(b.order_id), 'Midtrans (' + b.payment_type + ')'); }catch(e){ return send(res, 404, { error: e.message }); }
+    }
+    return send(res, 200, { ok: true });
+  }
+  if(p === '/api/pay/webhook/xendit' && req.method === 'POST'){
+    const S0 = settings();
+    if((req.headers['x-callback-token'] || '') !== S0.payment.xenditCallbackToken)
+      return send(res, 403, { error: 'Callback token tidak valid' });
+    const b = await readBody(req);
+    if(b.status === 'PAID'){
+      try{ fulfillInvoice(String(b.external_id), 'Xendit (' + (b.payment_method || 'invoice') + ')'); }catch(e){ return send(res, 404, { error: e.message }); }
+    }
+    return send(res, 200, { ok: true });
+  }
+
   /* ---------- Butuh login ---------- */
   if(!user) return send(res, 401, { error: 'Belum login' });
   const S = settings();
@@ -338,6 +452,36 @@ async function api(req, res, url, ip){
     const b = await readBody(req);
     kvUserSet(user.id, m[1], b.value);
     return send(res, 200, { ok: true });
+  }
+
+  /* ---------- Buat invoice pembayaran (server hitung harga, klien tak bisa manipulasi) ---------- */
+  if(p === '/api/pay/create' && req.method === 'POST'){
+    const b = await readBody(req);
+    let amount = 0, ref = '', detail = {};
+    if(b.tipe === 'membership'){
+      if(!['pro','elite'].includes(b.plan)) return send(res, 400, { error: 'Plan tidak dikenal' });
+      amount = S.plans[b.plan]; ref = b.plan;
+      detail.refCode = str(b.ref, 12);
+    } else if(b.tipe === 'grup'){
+      const gr = db.prepare('SELECT * FROM groups WHERE id=?').get(str(b.groupId, 20));
+      if(!gr) return send(res, 404, { error: 'Grup tidak ditemukan' });
+      const g = rowGroup(gr);
+      if(g.tipe !== 'langganan') return send(res, 400, { error: 'Grup ini gratis — langsung gabung' });
+      if(g.ownerUser === user.username) return send(res, 400, { error: 'Anda pemilik grup' });
+      amount = g.harga; ref = g.id; detail.groupNama = g.nama;
+    } else return send(res, 400, { error: 'Tipe pembayaran tidak dikenal' });
+    if(amount <= 0) return send(res, 400, { error: 'Nominal tidak valid' });
+    const inv = { id: uid(), at: now(), user: user.username, tipe: b.tipe, ref, amount,
+      provider: S.payment.provider, status: 'pending', detail: JSON.stringify(detail) };
+    let pay;
+    try{ pay = await createProviderPayment(inv, S.payment); }
+    catch(e){ return send(res, 502, { error: 'Provider pembayaran gagal: ' + e.message + ' — admin bisa beralih ke mode simulasi di Pengaturan.' }); }
+    db.prepare('INSERT INTO invoices(id,at,user,tipe,ref,amount,provider,status,pay_url,external,detail) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+      .run(inv.id, inv.at, inv.user, inv.tipe, inv.ref, inv.amount, inv.provider, 'pending', pay.payUrl, pay.external, inv.detail);
+    return send(res, 200, { id: inv.id, payUrl: pay.payUrl, amount: inv.amount, provider: inv.provider });
+  }
+  if(p === '/api/pay/mine' && req.method === 'GET'){
+    return send(res, 200, { invoices: db.prepare('SELECT id,at,tipe,ref,amount,provider,status,pay_url,paid_at FROM invoices WHERE user=? ORDER BY at DESC LIMIT 50').all(user.username) });
   }
 
   /* ---------- Sosial Hub: posts ---------- */
@@ -423,14 +567,8 @@ async function api(req, res, url, ip){
     const r = db.prepare('SELECT * FROM groups WHERE id=?').get(m[1]);
     if(!r) return send(res, 404, { error: 'Grup tidak ditemukan' });
     const g = rowGroup(r);
-    if(g.tipe === 'langganan' && g.ownerUser !== user.username){
-      const exp = new Date(); exp.setMonth(exp.getMonth() + 1);
-      g.subs.push({ by: user.username, at: now(), until: exp.toISOString(), harga: g.harga });
-      // 100% pendapatan langganan menjadi milik kreator grup — sistem TIDAK memotong
-      insertLedger({ tipe: 'langganan-grup', kanal: g.nama, user: g.ownerUser || g.owner, jumlah: g.harga,
-        status: 'pendapatan kreator (100%)',
-        detail: `Langganan oleh @${user.username}: Rp${g.harga.toLocaleString('id-ID')} — penuh ke pembuat grup, tanpa potongan sistem` });
-    }
+    if(g.tipe === 'langganan' && g.ownerUser !== user.username)
+      return send(res, 402, { error: 'Grup berbayar — buat pembayaran dulu via /api/pay/create (langganan aktif otomatis setelah LUNAS)' });
     if(!g.members.includes(user.username)) g.members.push(user.username);
     db.prepare('UPDATE groups SET members=?, subs=? WHERE id=?').run(JSON.stringify(g.members), JSON.stringify(g.subs), g.id);
     return send(res, 200, { ok: true });
@@ -444,30 +582,13 @@ async function api(req, res, url, ip){
     return send(res, 200, { ok: true });
   }
 
-  /* ---------- Membership & afiliasi ---------- */
+  /* ---------- Membership: turun ke free / komp admin (paket berbayar via /api/pay/create) ---------- */
   if(p === '/api/membership/buy' && req.method === 'POST'){
     const b = await readBody(req);
-    const plan = ['free', 'pro', 'elite'].includes(b.plan) ? b.plan : null;
-    if(!plan) return send(res, 400, { error: 'Plan tidak dikenal' });
+    if(b.plan !== 'free') return send(res, 402, { error: 'Paket berbayar kini lewat payment gateway — gunakan /api/pay/create (aktif otomatis setelah LUNAS)' });
     const mem = kvUserGet(user.id, 'membership') || { plan: 'free', affCode: 'GH' + crypto.randomBytes(3).toString('hex').toUpperCase() };
-    if(plan === 'free'){ mem.plan = 'free'; mem.expiry = null; kvUserSet(user.id, 'membership', mem); return send(res, 200, { ok: true, membership: mem }); }
-    const harga = S.plans[plan] || 0;
-    const base = (mem.expiry && new Date(mem.expiry) > new Date() && mem.plan === plan) ? new Date(mem.expiry) : new Date();
-    const exp = new Date(base); exp.setMonth(exp.getMonth() + 1);
-    const perpanjang = base.getTime() > Date.now();
-    mem.plan = plan; mem.since = mem.since || now(); mem.expiry = exp.toISOString();
+    mem.plan = 'free'; mem.expiry = null;
     kvUserSet(user.id, 'membership', mem);
-    insertLedger({ tipe: 'membership', kanal: plan, user: user.username, kode: mem.affCode, jumlah: -harga,
-      status: 'pembayaran', detail: `${perpanjang ? 'Perpanjang' : 'Daftar'} ${plan} 1 bulan` });
-    const ref = str(b.ref, 12);
-    if(ref && ref !== mem.affCode){
-      const owner = findUserByAffCode(ref);
-      if(owner && owner.username !== user.username){
-        insertLedger({ tipe: 'referral-membership', kanal: plan, kode: ref, user: owner.username,
-          jumlah: Math.round(harga * S.komisi.membershipRef), status: 'komisi referral',
-          detail: `Referral @${user.username} daftar ${plan}: ${S.komisi.membershipRef * 100}% × Rp${harga.toLocaleString('id-ID')}` });
-      }
-    }
     return send(res, 200, { ok: true, membership: mem });
   }
   /* (Catatan: komisi produk TIDAK bisa dibuat manual oleh pengguna —
@@ -557,6 +678,9 @@ async function api(req, res, url, ip){
       db.prepare('DELETE FROM kv_user WHERE user_id=?').run(uidNum);
       db.prepare('DELETE FROM sessions WHERE user_id=?').run(uidNum);
       return send(res, 200, { ok: true });
+    }
+    if(p === '/api/admin/invoices' && req.method === 'GET'){
+      return send(res, 200, { invoices: db.prepare('SELECT * FROM invoices ORDER BY at DESC LIMIT 100').all() });
     }
     if(p === '/api/admin/password' && req.method === 'PUT'){
       const b = await readBody(req);

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8"><title>GHub One — Pembayaran</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="css/style.css">
+<style>body{display:flex;align-items:center;justify-content:center;min-height:100vh}
+.paycard{width:100%;max-width:420px}</style>
+</head>
+<body>
+<div class="card paycard" id="box">
+  <div class="row" style="justify-content:center;margin-bottom:10px"><div class="brand-logo" style="width:52px;height:52px;font-size:26px">G</div></div>
+  <h3 style="text-align:center">💳 Pembayaran GHub One</h3>
+  <div id="inv" class="mt"><div class="empty">Memuat invoice…</div></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const $ = id => document.getElementById(id);
+const rp = n => 'Rp' + Number(n).toLocaleString('id-ID');
+const q = new URLSearchParams(location.search);
+const invId = q.get('inv');
+function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500); }
+async function load(){
+  try{
+    const r = await fetch('/api/pay/invoice/' + encodeURIComponent(invId));
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error);
+    const inv = j.invoice;
+    if(inv.status === 'paid'){
+      $('inv').innerHTML = `<div class="alert ok">✅ <b>LUNAS</b> — ${inv.tipe} ${inv.ref||''} · ${rp(inv.amount)}<br>Dibayar ${new Date(inv.paid_at).toLocaleString('id-ID')}. Layanan sudah aktif otomatis.</div>
+        <a class="btn mt" style="width:100%;justify-content:center" href="index.html#/membership">← Kembali ke aplikasi</a>`;
+      return;
+    }
+    $('inv').innerHTML = `
+      <div class="row between"><span class="sub">Invoice</span><b class="mono" style="padding:2px 8px">${inv.id}</b></div>
+      <div class="row between mt"><span class="sub">Item</span><b>${inv.tipe} — ${inv.ref||''}</b></div>
+      <div class="row between mt"><span class="sub">Total</span><b style="font-size:22px">${rp(inv.amount)}</b></div>
+      <div class="divider"></div>
+      <div class="alert warn" style="font-size:12px">🧪 <b>MODE SIMULASI</b> — tidak ada uang nyata berpindah. Di produksi, halaman ini digantikan halaman pembayaran Midtrans/Xendit (QRIS, GoPay, OVO, VA bank, kartu — 25+ metode) dan pelunasan dikonfirmasi lewat <b>webhook bertanda tangan</b>, bukan oleh browser.</div>
+      <button class="btn grn mt" style="width:100%;justify-content:center" onclick="bayar()">✅ Bayar Sekarang (Simulasi)</button>
+      <a class="btn ghost mt" style="width:100%;justify-content:center" href="index.html">Batal</a>`;
+  }catch(e){ $('inv').innerHTML = `<div class="alert bad">${e.message}</div>`; }
+}
+async function bayar(){
+  try{
+    const r = await fetch('/api/pay/simulate/' + encodeURIComponent(invId), { method:'POST' });
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error);
+    toast('Pembayaran LUNAS — layanan aktif otomatis 🎉');
+    load();
+  }catch(e){ toast(e.message); }
+}
+load();
+</script>
+</body>
+</html>

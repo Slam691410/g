@@ -246,7 +246,7 @@ try{
  */
 const MODUL_INTEGRASI = {
   dashboard: ['yahoo','coingecko','fx','rss','ai','db'],
-  social: ['affiliate','marketplaces','db'],
+  social: ['affiliate','payment','marketplaces','db'],
   project: ['db'],
   income: ['yahoo','coingecko','fx','blockchain','ai','db'],
   khl: ['ump','khl','worldbank','bps','db'],
@@ -256,7 +256,7 @@ const MODUL_INTEGRASI = {
   dividen: ['yahoo'],
   legacy: ['db'],
   profil: ['db'],
-  membership: ['affiliate','db']
+  membership: ['affiliate','payment','db']
 };
 
 /* ================================================================

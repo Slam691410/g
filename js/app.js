@@ -168,6 +168,10 @@ const IntegrasiUI = {
       return `<span class="int-chip on" onclick="AI.open()" title="Analisis heuristik lokal (privasi penuh) + LLM generatif opsional (BYO key)">
         🤖 <b>AI Asisten</b> · heuristik lokal aktif${hasKey?' · LLM tersambung':' · LLM opsional (BYO key)'}</span>`;
     }
+    if(id === 'payment'){
+      return `<span class="int-chip on" title="Invoice dibuat server → bayar → webhook bertanda tangan → layanan aktif otomatis. Midtrans/Xendit = 25+ metode (QRIS, GoPay, OVO, VA, kartu).">
+        💳 <b>Payment gateway</b> · invoice+webhook otomatis · Midtrans/Xendit siap (konfig admin)</span>`;
+    }
     if(!P) return '';
     if(P.statis){
       return `<a class="int-chip on" href="${P.url}" target="_blank" rel="noopener" title="Ketetapan/publikasi resmi — tertaut sumbernya">

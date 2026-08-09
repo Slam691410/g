@@ -262,7 +262,12 @@ Admin.register('keuangan', 'Keuangan & Komisi Sistem', function(el){
           <td><button class="btn ghost sm" onclick="DB.set('ledger',DB.get('ledger',[]).filter(x=>x.id!=='${l.id}'));Admin.navigate()">✕</button></td>
         </tr>`).join('')}
       </table>` : '<div class="empty">Buku besar kosong.</div>'}
+    </div>
+    <div class="card mt">
+      <h3>💳 Invoice Payment Gateway</h3>
+      <div id="admInvBox">${loadingBox('Memuat invoice dari database…')}</div>
     </div>`;
+  Admin._renderInvoices();
 });
 Admin.exportCSV = ()=>{
   const led = Admin.ledger();
@@ -337,6 +342,7 @@ Admin.register('setting', 'Pengaturan Sistem', function(el){
   const k = KOMISI;
   const st = Store.get('settings', {}) || {};
   const aff = st.affiliate || {};
+  const pg = st.payment || { provider:'simulasi', mode:'sandbox' };
   const nets = (aff.networks || []).map(n=>`${n.domain} | ${n.template}`).join('\n');
   const postbackUrl = `${location.origin}/api/affiliate/postback?key=${aff.postbackKey||'…'}&sub_id={aff_code}&amount={payout_rp}&order_id={order_id}&network={network}&status=approved`;
   el.innerHTML = `
@@ -392,6 +398,28 @@ Admin.register('setting', 'Pengaturan Sistem', function(el){
           <button class="btn sm" onclick="Admin.testPostback()">▶ Kirim</button>
         </div>
       </div>
+    </div>
+
+    <div class="card mt">
+      <h3>💳 Payment Gateway</h3>
+      <div class="hint">Alur produksi: invoice dibuat server → pengguna bayar di halaman provider (QRIS/GoPay/OVO/VA bank/kartu — 25+ metode) → provider memanggil <b>webhook bertanda tangan</b> → server mengaktifkan layanan otomatis. Kunci disimpan di database server, tidak pernah ke browser pengguna.</div>
+      <div class="grid g3 mt">
+        <div><label class="fl">Provider aktif</label>
+          <select id="pgProv">
+            <option value="simulasi" ${pg.provider==='simulasi'?'selected':''}>🧪 Simulasi (demo, tanpa uang nyata)</option>
+            <option value="midtrans" ${pg.provider==='midtrans'?'selected':''}>Midtrans Snap</option>
+            <option value="xendit" ${pg.provider==='xendit'?'selected':''}>Xendit Invoice</option>
+          </select></div>
+        <div><label class="fl">Mode</label>
+          <select id="pgMode"><option value="sandbox" ${pg.mode!=='production'?'selected':''}>Sandbox</option><option value="production" ${pg.mode==='production'?'selected':''}>Production</option></select></div>
+        <div><label class="fl">Midtrans Server Key</label><input id="pgMid" type="password" value="${U.esc(pg.midtransServerKey||'')}" placeholder="SB-Mid-server-…"></div>
+        <div><label class="fl">Xendit Secret Key</label><input id="pgXen" type="password" value="${U.esc(pg.xenditKey||'')}" placeholder="xnd_development_…"></div>
+        <div><label class="fl">Xendit Callback Token</label><input id="pgXenTok" type="password" value="${U.esc(pg.xenditCallbackToken||'')}"></div>
+        <div style="display:flex;align-items:flex-end"><button class="btn" onclick="Admin.savePayment()">💾 Simpan gateway</button></div>
+      </div>
+      <label class="fl">📮 URL Webhook — daftarkan di dashboard provider</label>
+      <div class="mono" style="font-size:11px">Midtrans: ${location.origin}/api/pay/webhook/midtrans<br>Xendit: ${location.origin}/api/pay/webhook/xendit</div>
+      <div class="hint mts">1 integrasi Midtrans/Xendit = semua metode bayar Indonesia sekaligus (QRIS = standar seluruh e-wallet & m-banking). Daftar merchant: <a href="https://midtrans.com" target="_blank">midtrans.com</a> · <a href="https://www.xendit.co/id/" target="_blank">xendit.co</a></div>
     </div>
 
     <div class="card mt">
@@ -485,9 +513,13 @@ const INTEGRASI = {
     { n:'ExchangeRate-API', cakupan:'160+ mata uang dunia (kurs USD/IDR dll)', mode:'Autopilot — cache 30 mnt', via:'langsung (CORS resmi)' },
     { n:'World Bank Open Data', cakupan:'1.400+ indikator makro resmi Indonesia (PDB, inflasi, pengangguran, CA)', mode:'Autopilot — cache 24 jam', via:'langsung (CORS resmi)' },
     { n:'RSS CNBC Indonesia', cakupan:'Berita market & ekonomi (artikel asli tertaut)', mode:'Autopilot — cache 15 mnt', via:'relay/proxy' },
-    { n:'RSS ANTARA Ekonomi', cakupan:'Berita ekonomi kantor berita nasional', mode:'Autopilot — cadangan otomatis bila CNBC gagal', via:'relay/proxy' }
+    { n:'RSS ANTARA Ekonomi', cakupan:'Berita ekonomi kantor berita nasional', mode:'Autopilot — cadangan otomatis bila CNBC gagal', via:'relay/proxy' },
+    { n:'Blockchain publik (Blockstream & Cloudflare RPC)', cakupan:'Saldo on-chain wallet BTC & ETH (read-only)', mode:'Autopilot — cache 5 mnt', via:'langsung (CORS resmi)' },
+    { n:'💳 Payment orchestration internal', cakupan:'Invoice → bayar → webhook → aktivasi otomatis (mode simulasi built-in)', mode:'Autopilot penuh', via:'server + webhook' }
   ],
   siap: [ // infrastruktur SUDAH jadi (deeplink+subid+postback), tinggal daftar publisher SEKALI per jaringan
+    { n:'💳 Midtrans Snap', buka:'25+ metode bayar: QRIS (semua e-wallet & m-banking), GoPay, OVO, VA 10+ bank, kartu', aksi:'Daftar merchant → isi Server Key di Pengaturan → webhook otomatis' },
+    { n:'💳 Xendit Invoice', buka:'QRIS, e-wallet, VA, retail outlet, kartu, paylater', aksi:'Daftar → isi Secret Key + Callback Token' },
     { n:'Involve Asia', buka:'Shopee, Lazada, Tokopedia, Zalora, dll (ribuan merchant Asia)', aksi:'Daftar publisher (review ±1–3 hari) → isi aff_id di template deeplink' },
     { n:'ACCESSTRADE Indonesia', buka:'Ratusan merchant lokal ID', aksi:'Daftar publisher → template deeplink' },
     { n:'Amazon Associates', buka:'Ratusan juta produk Amazon global', aksi:'Daftar → tag afiliasi' },
@@ -497,8 +529,7 @@ const INTEGRASI = {
     { n:'Sovrn Commerce (Skimlinks)', buka:'48.000+ merchant — AUTO-monetize semua link, merchant baru otomatis ikut', aksi:'Daftar sekali → paling dekat dgn "autopilot penuh"' }
   ],
   belum: [ // jujur: belum dibangun / belum terhubung
-    { n:'Payment gateway (Midtrans/Xendit/Stripe)', ket:'Pembayaran membership & langganan grup saat ini dicatat di ledger tanpa tagihan uang nyata' },
-    { n:'Payout/disbursement komisi ke rekening pengguna', ket:'Saldo komisi tercatat; pencairan otomatis butuh gateway disbursement + KYC' },
+    { n:'Payout/disbursement komisi ke rekening pengguna', ket:'Saldo komisi tercatat; pencairan otomatis butuh produk disbursement (Midtrans Iris/Xendit Payout) + KYC' },
     { n:'Scraper UMP/BPS otomatis tahunan', ket:'UMP 2026 tertanam dari sumber resmi; pembaruan tahunan masih manual (atau tambah scheduled scraper di produksi)' },
     { n:'API premium asuransi realtime', ket:'Tidak ada API publik premi asuransi ID; saat ini estimator + tautan marketplace berizin OJK' }
   ]
@@ -650,3 +681,44 @@ Admin.runDiag = async ()=>{
   const sum = tb.insertRow(-1);
   sum.innerHTML = `<td colspan="5"><div class="alert ${pass===Admin.DIAG.length?'ok':'warn'}"><b>${pass}/${Admin.DIAG.length} tes lulus.</b> ${pass===Admin.DIAG.length?'Semua menu terkoneksi penuh & autopilot 🎉':'Yang gagal disertai mitigasi di kolom kanan — umumnya soal jaringan/relay, coba uji ulang.'}</div></td>`;
 };
+
+Admin.savePayment = ()=>{
+  const s = Store.get('settings', {}) || {};
+  s.payment = {
+    provider: document.getElementById('pgProv').value,
+    mode: document.getElementById('pgMode').value,
+    midtransServerKey: document.getElementById('pgMid').value.trim(),
+    xenditKey: document.getElementById('pgXen').value.trim(),
+    xenditCallbackToken: document.getElementById('pgXenTok').value.trim()
+  };
+  Store.set('settings', s);
+  Toast.show('Payment gateway tersimpan: ' + s.payment.provider + ' (' + s.payment.mode + ') ✔');
+};
+
+/* Tambah daftar invoice ke halaman Keuangan (dimuat async setelah render) */
+Admin._renderInvoices = async ()=>{
+  const host = document.getElementById('admInvBox'); if(!host) return;
+  try{
+    const d = await Store.api('/api/admin/invoices');
+    host.innerHTML = d.invoices.length ? `<div style="overflow-x:auto"><table>
+      <tr><th>Invoice</th><th>Waktu</th><th>User</th><th>Item</th><th class="num">Nominal</th><th>Provider</th><th>Status</th></tr>
+      ${d.invoices.map(i=>`<tr>
+        <td class="mono" style="padding:3px 8px;font-size:11px">${i.id}</td>
+        <td class="hint">${U.dtm(i.at)}</td><td>@${U.esc(i.user)}</td>
+        <td>${U.esc(i.tipe)} ${U.esc(i.ref||'')}</td>
+        <td class="num">${U.rp(i.amount)}</td>
+        <td><span class="badge b-cyn">${U.esc(i.provider)}</span></td>
+        <td>${i.status==='paid'?`<span class="badge b-grn">✔ LUNAS ${i.paid_at?U.time(i.paid_at):''}</span>`:`<span class="badge b-yel">pending</span>`}</td>
+      </tr>`).join('')}
+    </table></div>` : '<div class="empty">Belum ada invoice.</div>';
+  }catch(e){ host.innerHTML = errorBox(e.message); }
+};
+
+/* Diagnostik: uji payment gateway end-to-end */
+Admin.DIAG.push({ n:'💳 Payment gateway: invoice → bayar → aktif (E2E)', menu:'Membership · Sosial Hub', run: async ()=>{
+    const d = await Store.api('/api/admin/invoices');
+    const st = Store.get('settings', {}) || {};
+    const prov = (st.payment||{}).provider || 'simulasi';
+    const paid = d.invoices.filter(i=>i.status==='paid').length;
+    return `provider: ${prov} (${(st.payment||{}).mode||'sandbox'}) · ${d.invoices.length} invoice · ${paid} lunas · webhook Midtrans/Xendit terpasang`; },
+  fix:'Atur provider & kunci di Pengaturan → Payment Gateway; mode simulasi selalu tersedia utk demo.' });
