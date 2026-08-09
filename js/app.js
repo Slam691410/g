@@ -145,6 +145,7 @@ const IntegrasiUI = {
     ojkmarket:{ statis:true, nama:'Marketplace asuransi berizin OJK', ket:'cek premi realtime (Lifepal/Qoala/PasarPolis)', url:'https://ojk.go.id/id/kanal/iknb/data-dan-statistik/direktori/asuransi/default.aspx' },
     marketplaces:{ statis:true, nama: MARKETPLACES.length + ' marketplace global', ket:'Shopee·Tokopedia·Lazada·Blibli·Amazon·AliExpress·eBay (jutaan produk)', url:'#' },
     khl:      { statis:true, nama:'KHL — Permenaker 18/2020', ket:'7 kelompok · 64 komponen (terpisah dari UMP)', url: (typeof KHL_PERMENAKER!=='undefined') ? KHL_PERMENAKER.url : '#' },
+    slik:     { statis:true, nama:'SLIK OJK (iDebku)', ket:'simulasi Kol 1–5 otomatis + cek iDeb resmi gratis', url:'https://idebku.ojk.go.id' },
     gnews:    { nama:'Google News (agregat)', ket:'himpun berita ribuan media per emiten + pindai risiko', pre:'rss_https://news.google', ttl:'autopilot: 15 mnt per kueri', test:()=>API.gnews('IHSG saham') },
     blacklist:{ statis:true, nama:'Registri Entitas Bermasalah', ket:(typeof ENTITAS_BERMASALAH!=='undefined'?ENTITAS_BERMASALAH.length:0) + ' entitas lintas-emiten → auto-EXCLUDE', url:'https://news.google.com/search?q=jiwasraya%20asabri%20terpidana&hl=id' },
     blockchain:{ nama:'Blockchain publik', ket:'saldo on-chain: BTC (Blockstream) · ETH (Cloudflare RPC)', pre:'bc_', ttl:'autopilot: 5 mnt', test:()=>API.btcBalance('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa') },

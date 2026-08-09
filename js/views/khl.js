@@ -79,6 +79,15 @@ const KHL = {
       <label class="fl">Jenis</label>
       <select id="utJenis"><option value="hutang">Hutang (saya berutang)</option><option value="piutang">Piutang (orang berutang ke saya)</option></select>
       <label class="fl">Pihak</label><input id="utPihak" placeholder="mis. Bank X / Budi">
+      <label class="fl">Jenis kreditur <span class="hint">(menentukan apakah tercatat di SLIK OJK)</span></label>
+      <select id="utKreditur">
+        <option value="bank">Bank umum / BPR — ✔ lapor SLIK</option>
+        <option value="multifinance">Multifinance / leasing — ✔ lapor SLIK</option>
+        <option value="fintech">Paylater / pinjol berizin OJK — ✔ lapor SLIK</option>
+        <option value="koperasi">Koperasi — umumnya tidak lapor SLIK</option>
+        <option value="perorangan">Perorangan / keluarga — tidak masuk SLIK</option>
+        <option value="lainnya">Lainnya</option>
+      </select>
       <div class="grid g2">
         <div><label class="fl">Nominal (Rp)</label><input id="utNilai" type="number"></div>
         <div><label class="fl">Cicilan/bulan (Rp)</label><input id="utCicil" type="number" placeholder="0"></div>
@@ -95,9 +104,24 @@ const KHL = {
     if(!pihak || !nilai) return Toast.show('Pihak & nominal wajib diisi');
     const us = this.utang();
     us.push({ id: U.uid(), jenis: document.getElementById('utJenis').value, pihak, nilai,
+      kreditur: document.getElementById('utKreditur').value,
       cicil: Number(document.getElementById('utCicil').value)||0, bunga: Number(document.getElementById('utBunga').value)||0,
       tempo: document.getElementById('utTempo').value, lunas: false, at: new Date().toISOString() });
     this.saveUtang(us); Modal.close(); App.navigate();
+  },
+
+  /* ---- SLIK OJK: simulasi kolektibilitas (Kol 1–5, POJK 40/2019) dari hari tunggakan ---- */
+  SLIK_KREDITUR: ['bank','multifinance','fintech'],
+  kol(u){
+    if(u.jenis !== 'hutang') return null;
+    if(u.lunas) return { k: 1, label: 'Lancar (lunas)', cls: 'b-grn' };
+    if(!u.tempo) return { k: 1, label: 'Kol 1 — Lancar', cls: 'b-grn' };
+    const hari = Math.floor((Date.now() - new Date(u.tempo).getTime()) / 864e5);
+    if(hari <= 0)  return { k: 1, label: 'Kol 1 — Lancar', cls: 'b-grn', hari: 0 };
+    if(hari <= 90) return { k: 2, label: `Kol 2 — DPK (${hari} hr tunggak)`, cls: 'b-yel', hari };
+    if(hari <= 120)return { k: 3, label: `Kol 3 — Kurang Lancar (${hari} hr)`, cls: 'b-red', hari };
+    if(hari <= 180)return { k: 4, label: `Kol 4 — Diragukan (${hari} hr)`, cls: 'b-red', hari };
+    return { k: 5, label: `Kol 5 — MACET (${hari} hr)`, cls: 'b-red', hari };
   },
   toggleLunas(id){ const us=this.utang(); const u=us.find(x=>x.id===id); u.lunas=!u.lunas; this.saveUtang(us); App.navigate(); },
   delUtang(id){ this.saveUtang(this.utang().filter(u=>u.id!==id)); App.navigate(); },
@@ -284,27 +308,64 @@ App.register('khl', 'KHL & Budget Dinamis', function(el){
       const totalP = us.filter(u=>u.jenis==='piutang'&&!u.lunas).reduce((s,u)=>s+u.nilai,0);
       const cicilan = us.filter(u=>u.jenis==='hutang'&&!u.lunas).reduce((s,u)=>s+u.cicil,0);
       const dsr = H.c.gaji ? cicilan/H.c.gaji*100 : null;
+      // SLIK: hanya hutang ke lembaga pelapor SLIK yang memengaruhi iDeb
+      const slikDebts = us.filter(u=>u.jenis==='hutang' && KHL.SLIK_KREDITUR.includes(u.kreditur||''));
+      const worstKol = slikDebts.length ? Math.max(...slikDebts.map(u=>(KHL.kol(u)||{k:1}).k)) : null;
+      const KOL_INFO = {1:['b-grn','Lancar — riwayat kredit bersih, aman utk pengajuan KPR/kredit baru'],
+        2:['b-yel','Dalam Perhatian Khusus (tunggakan 1–90 hari) — segera lunasi tunggakan sebelum lewat 90 hari!'],
+        3:['b-red','Kurang Lancar — pengajuan kredit hampir pasti ditolak; catatan bertahan lama di SLIK'],
+        4:['b-red','Diragukan — status berat, perlu restrukturisasi'],
+        5:['b-red','MACET — daftar hitam; wajib pelunasan/restrukturisasi + minta surat lunas & pastikan pelaporan diperbarui']};
       body.innerHTML = `
         <div class="grid g4 mb">
           <div class="stat"><div class="lbl">Total Hutang aktif</div><div class="val down">${U.rp(totalH)}</div></div>
           <div class="stat"><div class="lbl">Total Piutang aktif</div><div class="val up">${U.rp(totalP)}</div></div>
-          <div class="stat"><div class="lbl">Cicilan/bulan</div><div class="val">${U.rp(cicilan)}</div></div>
           <div class="stat"><div class="lbl">Rasio cicilan (DSR)</div><div class="val ${dsr==null?'':dsr>35?'down':'up'}">${dsr==null?'—':U.num(dsr,0)+'%'}</div>
-            <div class="d sub">sehat ≤ 35% gaji (standar OJK/SLIK)</div></div>
+            <div class="d sub">sehat ≤ 35% gaji</div></div>
+          <div class="stat"><div class="lbl">🏦 Estimasi SLIK (iDeb)</div>
+            <div class="val ${worstKol==null?'':worstKol===1?'up':worstKol===2?'':'down'}">${worstKol==null?'—':'Kol '+worstKol}</div>
+            <div class="d sub">${slikDebts.length?slikDebts.length+' kredit tercatat di lembaga pelapor SLIK':'tidak ada kredit di lembaga pelapor SLIK'}</div></div>
         </div>
         ${dsr!=null && dsr>35 ? `<div class="alert bad mb">⚠ Cicilan ${U.num(dsr,0)}% dari gaji — melebihi ambang sehat 35%. Prioritaskan pelunasan bunga tertinggi (metode avalanche).</div>`:''}
-        <div class="card">
+        ${worstKol!=null ? `<div class="alert ${worstKol===1?'ok':worstKol===2?'warn':'bad'} mb">🏦 <b>Simulasi SLIK: Kol ${worstKol}</b> — ${KOL_INFO[worstKol][1]}${worstKol>=2?'<br>⏳ Ingat: riwayat kolektibilitas tersimpan di SLIK ±24 bulan — keterlambatan hari ini menghambat KPR/kredit 2 tahun ke depan.':''}</div>` : ''}
+        <div class="card mb">
           <div class="row between mb wrap"><h3 style="margin:0">🤝 Daftar Hutang & Piutang</h3><button class="btn sm" onclick="KHL.addUtang()">＋ Catat</button></div>
           ${us.length ? `<div style="overflow-x:auto"><table>
-            <tr><th>Jenis</th><th>Pihak</th><th class="num">Nominal</th><th class="num">Cicilan/bln</th><th class="num">Bunga</th><th>Jatuh tempo</th><th>Status</th><th></th></tr>
-            ${us.map(u=>`<tr>
+            <tr><th>Jenis</th><th>Pihak</th><th>SLIK?</th><th class="num">Nominal</th><th class="num">Cicilan/bln</th><th>Jatuh tempo</th><th>Kolektibilitas</th><th>Status</th><th></th></tr>
+            ${us.map(u=>{ const kol = KHL.kol(u);
+              const slik = KHL.SLIK_KREDITUR.includes(u.kreditur||'');
+              return `<tr>
               <td><span class="badge ${u.jenis==='hutang'?'b-red':'b-grn'}">${u.jenis}</span></td>
-              <td><b>${U.esc(u.pihak)}</b></td><td class="num">${U.rp(u.nilai)}</td><td class="num">${U.rp(u.cicil)}</td>
-              <td class="num">${U.pct(u.bunga,1)}</td>
-              <td>${u.tempo ? (new Date(u.tempo)<new Date()&&!u.lunas?`<span class="down">${U.dt(u.tempo)} ⚠ lewat</span>`:U.dt(u.tempo)) : '—'}</td>
+              <td><b>${U.esc(u.pihak)}</b><div class="hint">${U.esc(u.kreditur||'')} · bunga ${U.pct(u.bunga,1)}</div></td>
+              <td>${u.jenis!=='hutang'?'—':slik?'<span class="badge b-pri" title="Kreditur ini melapor ke SLIK OJK — memengaruhi iDeb/BI-checking Anda">✔ lapor</span>':'<span class="badge b-mut" title="Tidak dilaporkan ke SLIK">tidak</span>'}</td>
+              <td class="num">${U.rp(u.nilai)}</td><td class="num">${U.rp(u.cicil)}</td>
+              <td>${u.tempo ? (new Date(u.tempo)<new Date()&&!u.lunas?`<span class="down">${U.dt(u.tempo)} ⚠</span>`:U.dt(u.tempo)) : '—'}</td>
+              <td>${kol?`<span class="badge ${kol.cls}">${kol.label}</span>`:'—'}</td>
               <td><button class="btn ${u.lunas?'grn':'ghost'} sm" onclick="KHL.toggleLunas('${u.id}')">${u.lunas?'✓ Lunas':'Belum'}</button></td>
-              <td><button class="btn ghost sm" onclick="KHL.delUtang('${u.id}')">🗑</button></td></tr>`).join('')}
+              <td><button class="btn ghost sm" onclick="KHL.delUtang('${u.id}')">🗑</button></td></tr>`; }).join('')}
           </table></div>` : `<div class="empty">Belum ada catatan hutang/piutang.</div>`}
+        </div>
+        <div class="card">
+          <h3>🏦 SLIK OJK (dulu "BI Checking") — cek resmi & aturan kolektibilitas</h3>
+          <div class="grid g2">
+            <div class="hint" style="line-height:1.9">
+              <b>Skala kolektibilitas (POJK — kualitas kredit):</b><br>
+              <span class="badge b-grn">Kol 1</span> Lancar — tanpa tunggakan<br>
+              <span class="badge b-yel">Kol 2</span> Dalam Perhatian Khusus — tunggakan 1–90 hari<br>
+              <span class="badge b-red">Kol 3</span> Kurang Lancar — 91–120 hari<br>
+              <span class="badge b-red">Kol 4</span> Diragukan — 121–180 hari<br>
+              <span class="badge b-red">Kol 5</span> Macet — &gt;180 hari<br>
+              Kolektibilitas di tabel dihitung <b>otomatis</b> dari jatuh tempo tiap hutangmu.
+            </div>
+            <div>
+              <div class="alert info" style="font-size:12.5px">
+                🔍 <b>Cek iDeb SLIK resmi & GRATIS</b> — OJK tidak menyediakan API publik (data debitur rahasia), jadi cek resminya via <b>iDebku OJK</b>: daftar online, hasil dikirim ±1 hari kerja.
+                <div class="row mt"><a class="btn sm" href="https://idebku.ojk.go.id" target="_blank" rel="noopener">Buka iDebku OJK ↗</a>
+                <a class="btn ghost sm" href="https://www.ojk.go.id/id/kanal/perbankan/Pages/Sistem-Layanan-Informasi-Keuangan-SLIK.aspx" target="_blank" rel="noopener">Tentang SLIK ↗</a></div>
+              </div>
+              <div class="hint mt">💡 Yang masuk SLIK: bank, BPR, multifinance, paylater/pinjol <b>berizin OJK</b>. Hutang ke perorangan/keluarga tidak masuk SLIK — tapi tetap dihitung di DSR & Kebutuhan Keluarga.</div>
+            </div>
+          </div>
         </div>`;
     }
     else if(tab==='darurat'){

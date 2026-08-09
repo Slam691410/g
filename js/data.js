@@ -249,7 +249,7 @@ const MODUL_INTEGRASI = {
   social: ['affiliate','payment','marketplaces','db'],
   project: ['db'],
   income: ['yahoo','coingecko','fx','blockchain','ai','db'],
-  khl: ['ump','khl','worldbank','bps','db'],
+  khl: ['ump','khl','slik','worldbank','bps','db'],
   proteksi: ['bpjs','ojkmarket','db'],
   invest: ['sbn','yahoo','db'],
   screening: ['worldbank','yahoo','fx','coingecko','bi','rss','gnews','blacklist'],
