@@ -171,12 +171,40 @@ const API = {
     const feeds = [
       { url: 'https://www.cnbcindonesia.com/market/rss', label: 'CNBC Indonesia — Market' },
       { url: 'https://www.antaranews.com/rss/ekonomi.xml', label: 'ANTARA — Ekonomi' },
+      { url: 'https://finance.detik.com/rss', label: 'detikFinance' },
       { url: 'https://www.cnbcindonesia.com/news/rss', label: 'CNBC Indonesia — News' }
     ];
     for(const f of feeds){
       try{ return await this.rss(f.url, f.label); }catch(e){ /* coba feed berikutnya */ }
     }
     throw new Error('Semua sumber berita gagal dimuat');
+  },
+
+  /* ---------- INTEL: menghimpun berita seluruh internet per topik/emiten ----------
+   * Google News RSS mengagregasi ribuan media di internet dalam satu feed
+   * per kueri — inilah cara sistem "menghimpun berita yang berseliweran"
+   * menjadi data terstruktur, lalu dipindai kata kunci risiko/positif.
+   */
+  async gnews(query){
+    const u = 'https://news.google.com/rss/search?q=' + encodeURIComponent(query) + '&hl=id&gl=ID&ceid=ID:id';
+    return await this.rss(u, 'Google News (agregat ribuan media) — "' + query + '"');
+  },
+  riskScan(items){
+    const risk = [], good = [];
+    for(const it of items){
+      const t = (it.title + ' ' + (it.desc || '')).toLowerCase();
+      const rw = RISK_WORDS.filter(w => t.includes(w));
+      const gw = GOOD_WORDS.filter(w => t.includes(w));
+      if(rw.length) risk.push({ item: it, words: rw });
+      else if(gw.length) good.push({ item: it, words: gw });
+    }
+    return { risk, good, total: items.length,
+      riskScore: items.length ? Math.round(risk.length / items.length * 100) : 0 };
+  },
+
+  /* Harga logam mulia dunia via Yahoo futures (USD/troy oz) */
+  async metal(symbol){ // GC=F emas, SI=F perak, PL=F platinum, PA=F palladium
+    return await this.quote(symbol);
   },
 
   /* ---------- Indikator teknikal ---------- */

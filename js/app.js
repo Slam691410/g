@@ -143,7 +143,10 @@ const IntegrasiUI = {
     bps:      { statis:true, nama:'Biaya pendidikan — BPS', ket: 'Statistik Pendidikan + Permendikbud 1/2021', url: JENJANG_SRC.url },
     sbn:      { statis:true, nama:'Kupon SBN Ritel — Kemenkeu', ket:'acuan imbal hasil rendah-risiko', url:'https://www.kemenkeu.go.id/sbnritel' },
     ojkmarket:{ statis:true, nama:'Marketplace asuransi berizin OJK', ket:'cek premi realtime (Lifepal/Qoala/PasarPolis)', url:'https://ojk.go.id/id/kanal/iknb/data-dan-statistik/direktori/asuransi/default.aspx' },
-    marketplaces:{ statis:true, nama: MARKETPLACES.length + ' marketplace global', ket:'Shopee·Tokopedia·Lazada·Blibli·Amazon·AliExpress·eBay (jutaan produk)', url:'#' }
+    marketplaces:{ statis:true, nama: MARKETPLACES.length + ' marketplace global', ket:'Shopee·Tokopedia·Lazada·Blibli·Amazon·AliExpress·eBay (jutaan produk)', url:'#' },
+    khl:      { statis:true, nama:'KHL — Permenaker 18/2020', ket:'7 kelompok · 64 komponen (terpisah dari UMP)', url: (typeof KHL_PERMENAKER!=='undefined') ? KHL_PERMENAKER.url : '#' },
+    gnews:    { nama:'Google News (agregat)', ket:'himpun berita ribuan media per emiten + pindai risiko', pre:'rss_https://news.google', ttl:'autopilot: 15 mnt per kueri', test:()=>API.gnews('IHSG saham') },
+    blacklist:{ statis:true, nama:'Registri Entitas Bermasalah', ket:(typeof ENTITAS_BERMASALAH!=='undefined'?ENTITAS_BERMASALAH.length:0) + ' entitas lintas-emiten → auto-EXCLUDE', url:'https://news.google.com/search?q=jiwasraya%20asabri%20terpidana&hl=id' }
   },
   chip(id){
     const P = this.PROV[id];

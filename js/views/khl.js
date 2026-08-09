@@ -6,6 +6,25 @@ const KHL = {
 
   cfg(){ return DB.get('khl_cfg', { provinsi: getProfile().provinsi || 'DKI Jakarta', gaji: 0, pasangan: false, pasanganKerja: false }); },
   saveCfg(c){ DB.set('khl_cfg', c); },
+
+  /* ---- DATA KHL (terpisah dari UMP!) — 7 kelompok, 64 komponen (Permenaker 18/2020) ---- */
+  defaultKelompok(){
+    // estimasi awal per kelompok memakai proporsi tipikal survei KHL × biaya hidup provinsi (proxy);
+    // WAJIB disesuaikan dengan harga pasar nyata di daerah pengguna (itulah hakikat survei KHL)
+    const basis = UMP2026.data[this.cfg().provinsi] || 3000000;
+    const o = {};
+    KHL_PERMENAKER.kelompok.forEach(k => o[k.id] = Math.round(k.porsi * basis / 1000) * 1000);
+    return o;
+  },
+  kelompokVals(){
+    const saved = DB.get('khl_kelompok', null);
+    return (saved && saved.vals) ? saved.vals : this.defaultKelompok();
+  },
+  setKelompok(id, v){
+    const vals = this.kelompokVals(); vals[id] = Number(v) || 0;
+    DB.set('khl_kelompok', { vals, editedAt: new Date().toISOString() }); App.navigate();
+  },
+  resetKelompok(){ DB.set('khl_kelompok', null); Toast.show('Kembali ke estimasi awal — sesuaikan dgn harga daerahmu'); App.navigate(); },
   anak(){ return DB.get('khl_anak', []); },
   saveAnak(a){ DB.set('khl_anak', a); },
   utang(){ return DB.get('utang', []); },
@@ -83,14 +102,17 @@ const KHL = {
   toggleLunas(id){ const us=this.utang(); const u=us.find(x=>x.id===id); u.lunas=!u.lunas; this.saveUtang(us); App.navigate(); },
   delUtang(id){ this.saveUtang(this.utang().filter(u=>u.id!==id)); App.navigate(); },
 
-  /* Hitung inti: KHL keluarga = UMP provinsi (proxy resmi kebutuhan layak pekerja lajang,
-     UU 13/2003 jo. PP 49/2025) × skala ekuivalensi OECD + biaya sekolah per anak,
-     disesuaikan inflasi terkini (World Bank CPI, realtime). */
+  /* Hitung inti — UMP dan KHL DIPISAH:
+     - UMP  : ketetapan resmi provinsi (konteks upah minimum)
+     - KHL  : dijumlah dari 7 kelompok / 64 komponen Permenaker 18/2020 (konteks kebutuhan hidup),
+              disesuaikan inflasi realtime, lalu dikalikan skala keluarga + biaya sekolah anak. */
   hitung(inflasi){
     const c = this.cfg();
     const ump = UMP2026.data[c.provinsi];
     const adj = inflasi != null ? (1 + inflasi/100 * ((Date.now() - new Date('2026-01-01')) / 31557600000)) : 1;
-    const khlSatu = ump * adj;
+    const vals = this.kelompokVals();
+    const khlLajangRaw = Object.values(vals).reduce((a,b)=>a+(Number(b)||0),0);
+    const khlSatu = khlLajangRaw * adj;
     const anak = this.anak();
     let faktor = EQUIV.kepala + (c.pasangan ? EQUIV.dewasa : 0);
     let biayaSek = 0; const detail = [];
@@ -106,8 +128,9 @@ const KHL = {
       }
     }
     const khlKeluarga = khlSatu * faktor + biayaSek;
-    const income = (c.gaji||0) + (c.pasangan && c.pasanganKerja ? c.gaji*0 : 0);
-    return { c, ump, adj, khlSatu, faktor, biayaSek, khlKeluarga, detail, anak, rasio: khlKeluarga ? (c.gaji / khlKeluarga) : 0 };
+    return { c, ump, adj, vals, khlLajangRaw, khlSatu, faktor, biayaSek, khlKeluarga, detail, anak,
+      rasio: khlKeluarga ? (c.gaji / khlKeluarga) : 0,
+      umpVsKhl: khlSatu ? (ump / khlSatu) : 0 };
   },
 
   /* Budgeting DINAMIS — bukan 50/30/20. Alokasi menyesuaikan rasio gaji/KHL. */
@@ -146,10 +169,11 @@ App.register('khl', 'KHL & Budget Dinamis', function(el){
       <div class="card mt">
         <h3>🧾 Sumber & pembaruan data</h3>
         <div class="hint">
-          • UMP ${UMP2026.meta.tahun}: <b>${U.esc(UMP2026.meta.dasar)}</b>, berlaku ${U.esc(UMP2026.meta.berlaku)} — <a href="${UMP2026.meta.url}" target="_blank">${U.esc(UMP2026.meta.sumber)}</a><br>
+          • <b>UMP ≠ KHL (konteks terpisah)</b> — UMP ${UMP2026.meta.tahun}: <b>${U.esc(UMP2026.meta.dasar)}</b>, berlaku ${U.esc(UMP2026.meta.berlaku)} — <a href="${UMP2026.meta.url}" target="_blank">${U.esc(UMP2026.meta.sumber)}</a><br>
+          • Data KHL: <a href="${KHL_PERMENAKER.url}" target="_blank">${U.esc(KHL_PERMENAKER.dasar)}</a> — nilai per kelompok diisi sesuai harga daerah (prinsip survei pasar KHL)<br>
           • Skala tanggungan: <a href="${EQUIV.url}" target="_blank">${U.esc(EQUIV.sumber)}</a> (dewasa +0,5 · anak &lt;14 th +0,3)<br>
           • Biaya sekolah: <a href="${JENJANG_SRC.url}" target="_blank">${U.esc(JENJANG_SRC.label)}</a><br>
-          • Penyesuaian inflasi <b>realtime</b>: ${inflasiMeta ? `<a href="${inflasiMeta.sourceUrl}" target="_blank">World Bank CPI</a> = <b>${U.pct(inflasi)}</b> (data ${inflasiMeta.year}, diambil ${U.time(inflasiMeta.fetchedAt)}) — angka KHL di atas sudah disesuaikan ${U.num((H.adj-1)*100,2)}% sejak Jan 2026` : 'gagal dimuat (nilai tanpa penyesuaian)'}
+          • Penyesuaian inflasi <b>realtime</b>: ${inflasiMeta ? `<a href="${inflasiMeta.sourceUrl}" target="_blank">World Bank CPI</a> = <b>${U.pct(inflasi)}</b> (data ${inflasiMeta.year}, diambil ${U.time(inflasiMeta.fetchedAt)}) — KHL di atas sudah disesuaikan ${U.num((H.adj-1)*100,2)}% sejak Jan 2026` : 'gagal dimuat (nilai tanpa penyesuaian)'}
         </div>
       </div>`;
 
@@ -169,13 +193,44 @@ App.register('khl', 'KHL & Budget Dinamis', function(el){
           </div>
         </div>
 
+        <div class="alert info mb">
+          ⚖️ <b>UMP ≠ KHL — dua konteks berbeda, data terpisah.</b> UMP = ketetapan upah minimum pemerintah (formula PP 49/2025). KHL = kebutuhan hidup layak versi <b>Permenaker 18/2020: 64 komponen dalam 7 kelompok</b>, yang nilainya seharusnya disurvei dari harga pasar daerah — di bawah bisa Anda isi sesuai harga nyata di daerahmu.
+        </div>
+
         <div class="grid g4 mb">
-          <div class="stat"><div class="lbl">UMP ${H.c.provinsi} 2026</div><div class="val">${U.rp(H.ump)}</div><div class="d sub">resmi Kemnaker</div></div>
-          <div class="stat"><div class="lbl">KHL 1 orang (adj. inflasi)</div><div class="val">${U.rp(H.khlSatu)}</div><div class="d sub">×${U.num(H.adj,4)} penyesuaian</div></div>
-          <div class="stat"><div class="lbl">KHL keluarga (×${U.num(H.faktor,1)} + sekolah)</div><div class="val">${U.rp(H.khlKeluarga)}</div><div class="d sub">${H.anak.length} anak · sekolah ${U.rp(H.biayaSek)}/bln</div></div>
+          <div class="stat"><div class="lbl">📌 UMP ${H.c.provinsi} (resmi)</div><div class="val">${U.rp(H.ump)}</div><div class="d sub">konteks: upah minimum</div></div>
+          <div class="stat"><div class="lbl">🧺 KHL lajang (64 komponen + inflasi)</div><div class="val">${U.rp(H.khlSatu)}</div><div class="d sub">×${U.num(H.adj,4)} penyesuaian inflasi</div></div>
+          <div class="stat"><div class="lbl">👨‍👩‍👧 KHL keluarga (×${U.num(H.faktor,1)} + sekolah)</div><div class="val">${U.rp(H.khlKeluarga)}</div><div class="d sub">${H.anak.length} anak · sekolah ${U.rp(H.biayaSek)}/bln</div></div>
           <div class="stat"><div class="lbl">Gaji vs KHL keluarga</div>
             <div class="val ${H.rasio>=1?'up':'down'}">${H.c.gaji?U.num(H.rasio*100,0)+'%':'—'}</div>
             <div class="d ${H.rasio>=1?'up':'down'}">${H.c.gaji ? (H.rasio>=1 ? 'di atas KHL ✔' : 'DI BAWAH KHL ⚠') : 'isi gaji dulu'}</div></div>
+        </div>
+
+        <div class="alert ${H.umpVsKhl>=1?'ok':'warn'} mb">
+          📊 <b>Perbandingan UMP vs KHL:</b> UMP ${H.c.provinsi} (${U.rp(H.ump)}) ${H.umpVsKhl>=1
+            ? `menutup <b>${U.num(H.umpVsKhl*100,0)}%</b> KHL lajang versi Anda — di atas kebutuhan hidup layak.`
+            : `hanya menutup <b>${U.num(H.umpVsKhl*100,0)}%</b> dari KHL lajang versi Anda (${U.rp(H.khlSatu)}) — bekerja dgn upah minimum saja belum hidup layak di sini.`}
+        </div>
+
+        <div class="card mb">
+          <div class="row between wrap">
+            <h3 style="margin:0">🧺 Data KHL — Permenaker 18/2020 <span class="badge b-yel">7 kelompok · 64 komponen</span></h3>
+            <button class="btn ghost sm" onclick="KHL.resetKelompok()">↺ Reset estimasi awal</button>
+          </div>
+          <div class="hint mt">Isi nilai per kelompok sesuai <b>harga pasar nyata di daerahmu</b> (prinsip survei KHL). Klik tiap kelompok untuk melihat poin-poin komponennya.</div>
+          <div class="mt">
+            ${KHL_PERMENAKER.kelompok.map(k=>`
+              <details style="border-bottom:1px solid rgba(35,46,78,.6);padding:8px 0">
+                <summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;list-style:none">
+                  <span><b>${k.nama}</b> <span class="badge b-mut">${k.n} komponen</span></span>
+                  <span class="row" style="gap:6px">Rp <input type="number" value="${H.vals[k.id]||0}" style="width:130px;padding:5px 8px"
+                    onchange="KHL.setKelompok('${k.id}', this.value)" onclick="event.preventDefault()">/bln</span>
+                </summary>
+                <div class="hint mts" style="padding-left:4px">📋 Poin komponen: ${k.poin}</div>
+              </details>`).join('')}
+            <div class="row between mt"><b>Total KHL lajang (sebelum inflasi)</b><b style="font-size:16px">${U.rp(H.khlLajangRaw)}/bln</b></div>
+          </div>
+          ${SRC(KHL_PERMENAKER.dasar, KHL_PERMENAKER.url)}
         </div>
 
         ${H.c.gaji ? `<div class="alert ${H.rasio>=1.3?'ok':H.rasio>=1?'info':'bad'} mb">

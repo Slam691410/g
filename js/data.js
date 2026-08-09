@@ -249,11 +249,94 @@ const MODUL_INTEGRASI = {
   social: ['affiliate','marketplaces','db'],
   project: ['db'],
   income: ['yahoo','coingecko','fx','db'],
-  khl: ['ump','worldbank','bps','db'],
+  khl: ['ump','khl','worldbank','bps','db'],
   proteksi: ['bpjs','ojkmarket','db'],
   invest: ['sbn','yahoo','db'],
-  screening: ['worldbank','yahoo','fx','coingecko','bi','rss'],
+  screening: ['worldbank','yahoo','fx','coingecko','bi','rss','gnews','blacklist'],
   dividen: ['yahoo'],
   profil: ['db'],
   membership: ['affiliate','db']
 };
+
+/* ================================================================
+ * KHL ≠ UMP — DUA KONTEKS BERBEDA, DATA TERPISAH
+ * - UMP  : ketetapan upah minimum oleh gubernur (formula PP 51/2023
+ *          jo. PP 49/2025) — konteks PENGUPAHAN.
+ * - KHL  : standar kebutuhan hidup layak pekerja lajang / bulan —
+ *          konteks KEBUTUHAN HIDUP. Diatur Permenaker No. 18 Tahun 2020
+ *          (perubahan atas Permenaker 21/2016): 64 KOMPONEN dalam
+ *          7 KELOMPOK. Nilai rupiahnya disurvei pasar per daerah;
+ *          di sini tiap kelompok bisa diisi sesuai harga nyata di
+ *          daerah Anda (default = estimasi awal, WAJIB disesuaikan).
+ * ================================================================ */
+const KHL_PERMENAKER = {
+  dasar: 'Permenaker No. 18 Tahun 2020 jo. Permenaker 21/2016 — 64 komponen KHL, 7 kelompok (standar pekerja lajang/bulan)',
+  url: 'https://peraturan.bpk.go.id/Details/163986/permenaker-no-18-tahun-2020',
+  kelompok: [
+    { id:'makan',   nama:'I. Makanan & Minuman', n:11, porsi:0.26,
+      poin:'beras · sumber protein (daging/ikan/telur) · kacang-kacangan (tempe/tahu) · susu bubuk · gula pasir · minyak goreng · sayuran · buah-buahan · karbohidrat lain (mie/tepung) · teh/kopi · bumbu-bumbuan' },
+    { id:'sandang', nama:'II. Sandang', n:13, porsi:0.07,
+      poin:'celana/rok panjang · celana pendek · ikat pinggang · kemeja/blus · kaos oblong/BH · celana dalam · sarung/kain panjang · sepatu · kaos kaki · perlengkapan pembersih sepatu · sandal jepit · handuk mandi · perlengkapan ibadah' },
+    { id:'rumah',   nama:'III. Perumahan', n:26, porsi:0.32,
+      poin:'sewa kamar · dipan/tempat tidur · kasur & bantal · seprei & sarung bantal · meja & kursi · lemari pakaian · sapu · perlengkapan makan (piring/gelas/sendok-garpu) · ceret aluminium · wajan · panci · sendok masak · rice cooker · kompor & perlengkapan (kompor gas 1 tungku, selang & regulator, tabung 3 kg) · gas elpiji · ember plastik · gayung plastik · listrik (900 VA) · bola lampu · air bersih · sabun cuci pakaian · sabun cuci piring · setrika · rak piring · pisau dapur · cermin' },
+    { id:'didik',   nama:'IV. Pendidikan', n:2, porsi:0.02,
+      poin:'bacaan (tabloid/surat kabar) atau radio · ballpoint/pensil' },
+    { id:'sehat',   nama:'V. Kesehatan', n:5, porsi:0.05,
+      poin:'sarana kesehatan (pasta gigi, sabun mandi, sikat gigi, sampo, pembalut/alat cukur) · deodoran · obat anti nyamuk · potong rambut · sisir' },
+    { id:'transp',  nama:'VI. Transportasi', n:1, porsi:0.18,
+      poin:'transportasi kerja & lainnya (angkutan umum PP)' },
+    { id:'rekre',   nama:'VII. Rekreasi & Tabungan', n:6, porsi:0.10,
+      poin:'rekreasi (2×/bulan) · tabungan (2% dari total KHL) · jaminan sosial + komponen penunjang lainnya' }
+  ]
+};
+
+/* ================================================================
+ * REGISTRI ENTITAS BERMASALAH — LINTAS EMITEN
+ * Manajemen/PSP/grup yang tercatat bermasalah berdasarkan PUTUSAN
+ * PENGADILAN, tindakan regulator, atau keterbukaan/pemberitaan
+ * nasional. Satu entitas bisa menjangkiti BANYAK emiten (lintas
+ * emiten) → semua ticker terafiliasi otomatis di-EXCLUDE dari
+ * rekomendasi Screening. Verifikasi mandiri via tautan riset.
+ * ================================================================ */
+const ENTITAS_BERMASALAH = [
+  { nama:'Benny Tjokrosaputro', tipe:'PSP / Manajemen', lintas:true,
+    kasus:'Terpidana korupsi Jiwasraya & Asabri (putusan pengadilan; pemberitaan nasional).',
+    tickers:['MYRX','RIMO','HOTL'] },
+  { nama:'Heru Hidayat', tipe:'PSP', lintas:true,
+    kasus:'Terpidana korupsi Jiwasraya & Asabri (putusan pengadilan).',
+    tickers:['TRAM','IIKP','PORT','SMRU'] },
+  { nama:'Emirsyah Satar (eks Dirut)', tipe:'Manajemen (historis)', lintas:false,
+    kasus:'Terpidana suap & pencucian uang pengadaan pesawat (putusan pengadilan).',
+    tickers:['GIAA'] },
+  { nama:'Destiawan Soewardjono (eks Dirut)', tipe:'Manajemen (historis)', lintas:false,
+    kasus:'Diproses hukum kasus penyimpangan fasilitas kredit (pemberitaan nasional 2023–2024).',
+    tickers:['WSKT'] },
+  { nama:'Grup Bakrie', tipe:'Grup / PSP', lintas:true,
+    kasus:'Riwayat gagal bayar & restrukturisasi utang berulang, aksi korporasi dilutif yang merugikan minoritas (keterbukaan informasi & pemberitaan bertahun-tahun).',
+    tickers:['BUMI','ENRG','ELTY','BNBR','VIVA','DEWA','UNSP'] },
+  { nama:'Manajemen lama AISA (era 2017)', tipe:'Manajemen (historis)', lintas:false,
+    kasus:'Skandal penggelembungan laporan keuangan & kasus beras (2017–2018, temuan audit & pemberitaan).',
+    tickers:['AISA'] },
+  { nama:'Grup Kresna', tipe:'Grup', lintas:true,
+    kasus:'Izin usaha Kresna Life dicabut OJK; gagal bayar produk investasi (2020–2023).',
+    tickers:['KREN','ASMI'] },
+  { nama:'Sri Rejeki Isman (korporasi)', tipe:'Perusahaan', lintas:false,
+    kasus:'Dinyatakan pailit (putusan 2024); riwayat gagal bayar & delisting.',
+    tickers:['SRIL'] },
+  { nama:'Tata niaga timah (kasus 2024)', tipe:'Perusahaan & afiliasi', lintas:true,
+    kasus:'Perkara korupsi tata niaga timah dengan kerugian negara sangat besar (persidangan 2024; melibatkan mitra swasta perusahaan).',
+    tickers:['TINS'] }
+];
+function blacklistHits(ticker){
+  return ENTITAS_BERMASALAH.filter(e => e.tickers.includes(ticker));
+}
+function blacklistLintas(ticker){
+  // emiten lain yang terjangkit lewat entitas yang sama (lintas emiten)
+  const out = new Set();
+  blacklistHits(ticker).forEach(e => e.tickers.forEach(t => { if(t !== ticker) out.add(t + ' (via ' + e.nama + ')'); }));
+  return [...out];
+}
+
+/* Kata kunci pemindai risiko utk mesin penghimpun berita (Intel) */
+const RISK_WORDS = ['korupsi','kasus','tersangka','terdakwa','gagal bayar','default','pkpu','pailit','bangkrut','suspensi','digugat','gugatan','manipulasi','sanksi','denda ojk','delisting','fraud','penipuan','penggelapan','disita','buron','dicabut izin','restrukturisasi utang','rugi besar','phk massal'];
+const GOOD_WORDS = ['laba naik','dividen','cetak laba','rekor','ekspansi','buyback','kinerja positif','tumbuh','naik'];

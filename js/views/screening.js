@@ -29,8 +29,11 @@ const Scr = {
     if(e.bvps <= 0) f.push('Ekuitas negatif — red flag berat');
     if(pbv != null && pbv > 6) f.push('Valuasi PBV sangat mahal (>6×)');
     e.hist.forEach(h=>{ if(h.lvl==='bad') f.push('Histori: ' + h.txt); });
+    // MESIN BLACKLIST LINTAS-EMITEN: manajemen/PSP/grup bermasalah menular ke semua emiten terafiliasi
+    blacklistHits(e.t).forEach(b=> f.push(`⛔ ENTITAS BERMASALAH: ${b.nama} (${b.tipe}) — ${b.kasus}`));
     return f;
   },
+  isExcluded(t){ return blacklistHits(t).length > 0; },
 
   async openTeknikal(t, nama){
     Modal.open(`<h3>📈 Teknikal ${t} — Entry / Exit</h3><div id="tekBox">${loadingBox('Mengambil 6 bulan data harga asli dari Yahoo Finance…')}</div>`);
@@ -83,24 +86,58 @@ const Scr = {
 
   openRiset(t, nama){
     const em = Object.values(EMITEN).flat().find(x=>x.t===t);
+    const bl = blacklistHits(t);
+    const lintas = blacklistLintas(t);
     Modal.open(`
       <h3>🕵️ Riset Histori ${t} — ${U.esc(nama)}</h3>
-      <div class="hint">Cek histori perusahaan, afiliasi, manajemen & pemegang saham pengendali (PSP): apakah pernah cacat (gagal bayar, kasus hukum, manipulasi), dan mitigasi aksi korporasi.</div>
-      ${em && em.hist.length ? em.hist.map(h=>`<div class="alert ${h.lvl==='bad'?'bad':'warn'} mts">${h.lvl==='bad'?'🚩':'⚠️'} ${U.esc(h.txt)}</div>`).join('')
-        : `<div class="alert ok mts">✔ Tidak ada catatan histori cacat yang terdokumentasi di basis kami. Tetap verifikasi mandiri lewat tautan di bawah.</div>`}
+      <div class="hint">Histori perusahaan, afiliasi, manajemen & PSP — plus <b>intel berita seluruh internet</b> (agregasi ribuan media) yang dipindai kata kunci risiko secara otomatis.</div>
+
+      ${bl.length ? bl.map(b=>`<div class="alert bad mts">⛔ <b>ENTITAS BERMASALAH — ${U.esc(b.nama)}</b> (${U.esc(b.tipe)})<br>${U.esc(b.kasus)}
+        ${b.lintas?`<div class="hint mts">🔗 Lintas emiten — entitas ini juga terkait: <b>${b.tickers.filter(x=>x!==t).join(', ')}</b> → semuanya ikut ter-EXCLUDE.</div>`:''}</div>`).join('')
+      : ''}
+      ${lintas.length && !bl.length ? `<div class="alert warn mts">🔗 Terjangkit lintas-emiten: ${lintas.map(U.esc).join('; ')}</div>` : ''}
+      ${em && em.hist.length ? em.hist.map(h=>`<div class="alert ${h.lvl==='bad'?'bad':'warn'} mts">${h.lvl==='bad'?'🚩':'⚠️'} ${U.esc(h.txt)}</div>`).join('') : ''}
+      ${!bl.length && !(em && em.hist.some(h=>h.lvl==='bad')) ? `<div class="alert ok mts">✔ Tidak ada catatan di registri entitas bermasalah (${ENTITAS_BERMASALAH.length} entitas, lintas-emiten). Cek juga intel berita di bawah.</div>` : ''}
+
+      <div class="divider"></div>
+      <b style="font-size:13px">📡 Intel Media — himpunan berita internet ttg ${t} <span class="badge b-cyn">pindai otomatis</span></b>
+      <div id="intelBox" class="mts">${loadingBox('Menghimpun berita dari ribuan media (Google News RSS) & memindai kata kunci risiko…')}</div>
+
       <div class="divider"></div>
       <b style="font-size:13px">Checklist wajib sebelum beli:</b>
       <div class="hint mt" style="line-height:1.9">
         ☐ Keterbukaan informasi & sanksi di IDX (5 th terakhir)<br>
-        ☐ Rekam jejak direksi/komisaris (kasus hukum, rangkap jabatan janggal)<br>
-        ☐ PSP & afiliasi: transaksi pihak berelasi yang merugikan minoritas?<br>
-        ☐ Aksi korporasi (rights issue dilutif, private placement murah, backdoor listing) + mitigasi: baca prospektus, hitung dilusi, cek penggunaan dana<br>
-        ☐ Opini auditor (wajar tanpa pengecualian?) & pergantian auditor mendadak<br>
-        ☐ Sentimen berita & sosial media (tautan di bawah)
+        ☐ Rekam jejak direksi/komisaris — <b>cek juga jabatan mereka di emiten lain</b><br>
+        ☐ PSP & afiliasi: transaksi pihak berelasi yang merugikan minoritas? <b>Grup yang sama di emiten lain bermasalah?</b><br>
+        ☐ Aksi korporasi (rights issue dilutif, private placement murah) + mitigasi: baca prospektus, hitung dilusi, cek penggunaan dana<br>
+        ☐ Opini auditor & pergantian auditor mendadak<br>
+        ☐ Sentimen sosial media (tautan di bawah)
       </div>
       <div class="pill-row mt">
         ${risetLinks(t, nama).map(l=>`<a class="btn ghost sm" href="${l.url}" target="_blank" rel="noopener">${l.nama} ↗</a>`).join('')}
       </div>`);
+
+    // Intel: himpun berita internet per emiten + pindai risiko
+    (async ()=>{
+      const box = document.getElementById('intelBox'); if(!box) return;
+      try{
+        const news = await API.gnews(`"${t}" OR "${nama}" saham`);
+        const scan = API.riskScan(news.items);
+        box.innerHTML = `
+          <div class="row wrap mb" style="gap:6px">
+            <span class="badge ${scan.risk.length? 'b-red':'b-grn'}">🚨 ${scan.risk.length} berita berindikasi risiko</span>
+            <span class="badge b-grn">👍 ${scan.good.length} positif</span>
+            <span class="badge b-mut">${scan.total} artikel dihimpun</span>
+            ${scan.risk.length ? `<span class="badge b-red">skor risiko media ${scan.riskScore}%</span>` : ''}
+          </div>
+          ${scan.risk.slice(0,5).map(r=>`<div class="alert bad mts" style="padding:8px 10px">🚨 <a href="${U.esc(r.item.link)}" target="_blank" rel="noopener">${U.esc(r.item.title)}</a><div class="hint">kata terpicu: ${r.words.join(', ')}</div></div>`).join('')}
+          ${news.items.slice(0,6).map(it=>`<div style="padding:6px 0;border-bottom:1px solid rgba(35,46,78,.5)"><a href="${U.esc(it.link)}" target="_blank" rel="noopener" style="font-size:12.5px">${U.esc(it.title)}</a></div>`).join('')}
+          ${SRC(news.source, 'https://news.google.com', news.fetchedAt)}
+          <div class="hint mts">Sosial media: API X/Stockbit tidak tersedia gratis — gunakan tombol X & Stockbit di bawah utk menyelami sentimen manual.</div>`;
+        if(scan.risk.length >= 3) box.insertAdjacentHTML('afterbegin',
+          `<div class="alert bad mb"><b>⛔ Auto red-flag media:</b> ${scan.risk.length} pemberitaan berindikasi risiko terdeteksi — hindari entry sampai terverifikasi bersih.</div>`);
+      }catch(e){ box.innerHTML = errorBox(e.message); }
+    })();
   }
 };
 
@@ -220,8 +257,9 @@ App.register('screening', 'Screening Saham', function(el){
       const best = rows.filter(r=>r.score>=70 && !r.flags.length);
 
       box.innerHTML = `
-        ${best.length ? `<div class="alert ok mb">✅ <b>Rekomendasi teratas sektor ini (skor ≥70, tanpa red flag):</b> ${best.map(r=>`<b>${r.e.t}</b> (skor ${r.score})`).join(' · ')} — tetap verifikasi laporan keuangan & histori lewat tombol 🕵️.</div>`
-        : `<div class="alert warn mb">Tidak ada emiten di sektor ini yang lolos ambang skor ≥70 tanpa red flag saat ini.</div>`}
+        ${best.length ? `<div class="alert ok mb">✅ <b>Rekomendasi teratas sektor ini (skor ≥70, nol red flag, lolos registri entitas bermasalah lintas-emiten):</b> ${best.map(r=>`<b>${r.e.t}</b> (skor ${r.score})`).join(' · ')} — tetap jalankan 🕵️ intel media & checklist sebelum beli.</div>`
+        : `<div class="alert warn mb">Tidak ada emiten di sektor ini yang lolos saringan ketat (skor ≥70 + nol red flag + bebas entitas bermasalah).</div>`}
+        <div class="alert bad mb" style="font-size:12px">⛔ <b>Prinsip eksklusi keras:</b> fundamental buruk, aksi korporasi merugikan, manajemen/perusahaan/afiliasi pernah bermasalah, atau PSP tercela → <b>otomatis tidak direkomendasikan</b>. Registri entitas bermasalah bersifat <b>lintas-emiten</b> (${ENTITAS_BERMASALAH.length} entitas terpantau — satu nama bermasalah menular ke semua emiten terafiliasinya).</div>
         <div class="card" style="overflow-x:auto"><table>
           <tr><th>Skor</th><th>Emiten</th><th class="num">Harga <span class="badge badge-live">LIVE</span></th><th class="num">±%</th><th class="num">PER</th><th class="num">PBV</th><th class="num">ROE</th><th class="num">DER</th><th class="num">NPM</th><th class="num">Growth</th><th>Red Flag</th><th>Aksi</th></tr>
           ${rows.map(r=>`<tr>
@@ -235,7 +273,7 @@ App.register('screening', 'Screening Saham', function(el){
             <td class="num">${r.e.der!=null?U.num(r.e.der,1)+'×':'bank'}</td>
             <td class="num">${U.num(r.e.npm,0)}%</td>
             <td class="num ${r.e.growth>=0?'up':'down'}">${U.num(r.e.growth,0)}%</td>
-            <td>${r.flags.length?`<span class="badge b-red" title="${U.esc(r.flags.join(' | '))}">🚩 ${r.flags.length}</span>`:`<span class="badge b-grn">✔ bersih</span>`}</td>
+            <td>${Scr.isExcluded(r.e.t)?`<span class="badge b-red" title="${U.esc(r.flags.join(' | '))}">⛔ EXCLUDED</span>`:r.flags.length?`<span class="badge b-red" title="${U.esc(r.flags.join(' | '))}">🚩 ${r.flags.length}</span>`:`<span class="badge b-grn">✔ bersih</span>`}</td>
             <td class="row" style="gap:4px">
               <button class="btn ghost sm" title="Riset histori & sosmed" onclick="Scr.openRiset('${r.e.t}','${U.esc(r.e.n)}')">🕵️</button>
               <button class="btn ghost sm" title="Teknikal entry/exit" onclick="Scr.openTeknikal('${r.e.t}','${U.esc(r.e.n)}')">📈</button>
