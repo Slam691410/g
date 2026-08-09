@@ -133,6 +133,23 @@ const KHL = {
       umpVsKhl: khlSatu ? (ump / khlSatu) : 0 };
   },
 
+  /* PPh 21 estimasi (UU HPP 7/2021): biaya jabatan 5% maks 6jt/th, PTKP TK/K + anak (maks 3), tarif progresif */
+  hitungPPh21(gajiBulanan, kawin, jmlAnak){
+    const bruto = gajiBulanan * 12;
+    const biayaJabatan = Math.min(bruto * 0.05, 6000000);
+    const ptkp = 54000000 + (kawin ? 4500000 : 0) + Math.min(jmlAnak||0, 3) * 4500000;
+    let pkp = Math.max(0, Math.floor((bruto - biayaJabatan - ptkp) / 1000) * 1000);
+    const layers = [[60000000,.05],[190000000,.15],[250000000,.25],[4500000000,.30],[Infinity,.35]];
+    let pajak = 0;
+    for(const [cap, rate] of layers){
+      const take = Math.min(pkp, cap);
+      pajak += take * rate; pkp -= take;
+      if(pkp <= 0) break;
+    }
+    return { tahunan: pajak, bulanan: pajak / 12, ptkp,
+      status: (kawin?'K':'TK') + '/' + Math.min(jmlAnak||0,3) };
+  },
+
   /* Budgeting DINAMIS — bukan 50/30/20. Alokasi menyesuaikan rasio gaji/KHL. */
   budgetDinamis(rasio){
     if(rasio < 1)    return { tier: 'Bertahan (Survival)', warna: 'b-red', a: { 'Kebutuhan pokok': 90, 'Cicilan/darurat': 8, 'Sosial': 2, 'Gaya hidup': 0, 'Investasi': 0 },
@@ -320,27 +337,53 @@ App.register('khl', 'KHL & Budget Dinamis', function(el){
     else { // budget dinamis
       const B = KHL.budgetDinamis(H.rasio || 0);
       const gaji = H.c.gaji || 0;
+      // 🏛 PAJAK: estimasi PPh 21 otomatis (status kawin & anak dari Profil/KHL)
+      const pph = KHL.hitungPPh21(gaji, H.c.pasangan, H.anak.length);
+      // 🕌 ZAKAT: 2,5% penghasilan bila mencapai nisab (85 gr emas/tahun) — harga emas LIVE
+      let goldGram = null;
+      try{ const cg = await API.cryptoGold(); goldGram = cg.data['pax-gold'].idr / 31.1035; }catch(e){}
+      const nisabBulanan = goldGram ? goldGram * 85 / 12 : null;
+      const zakatOn = H.c.zakatOn !== false;
+      const wajibZakat = nisabBulanan != null ? gaji >= nisabBulanan : gaji >= 7000000;
+      const zakat = (zakatOn && wajibZakat) ? gaji * 0.025 : 0;
+      const netto = Math.max(0, gaji - pph.bulanan - zakat);
       const pokokPct = B.a['Kebutuhan pokok'] || 0;
-      const alokasiPokok = gaji * pokokPct / 100;
+      const alokasiPokok = netto * pokokPct / 100;
       body.innerHTML = `
         ${gaji ? '' : `<div class="alert warn mb">Isi gaji & profil di tab <a href="#" onclick="KHL.setTab('khl');return false">UMR vs KHL</a> dulu agar alokasi dihitung.</div>`}
         <div class="grid g3 mb">
           <div class="stat"><div class="lbl">Basis: KHL keluarga = jumlah orang × KHL</div><div class="val">${U.rp(H.khlKeluarga)}</div>
             <div class="d sub">KHL lajang ${U.rp(H.khlSatu)} × skala ${U.num(H.faktor,1)} orang-setara + sekolah ${U.rp(H.biayaSek)}</div></div>
-          <div class="stat"><div class="lbl">Gaji</div><div class="val">${gaji?U.rp(gaji):'—'}</div></div>
+          <div class="stat"><div class="lbl">Gaji bruto → netto</div><div class="val">${gaji?U.rp(netto):'—'}</div>
+            <div class="d sub">${gaji?`bruto ${U.rp(gaji)} − pajak ${U.rp(pph.bulanan)} − zakat ${U.rp(zakat)}`:''}</div></div>
           <div class="stat"><div class="lbl">Rasio Gaji ÷ KHL keluarga</div><div class="val ${H.rasio>=1?'up':'down'}">${gaji?U.num(H.rasio*100,0)+'%':'—'}</div></div>
         </div>
+
+        <div class="card mb">
+          <h3>🧾 Kewajiban Dulu: Zakat & Pajak (dipotong sebelum alokasi)</h3>
+          <div class="row between mts"><span>🏛 <b>Pajak PPh 21</b> <span class="hint">(estimasi, status ${pph.status} · PTKP ${U.rp(pph.ptkp)}/th otomatis dari data pasangan & anak)</span></span><b class="down">−${U.rp(pph.bulanan)}/bln</b></div>
+          <div class="bar-wrap mts"><div class="bar" style="width:${gaji?U.clamp(pph.bulanan/gaji*100,1,100):0}%;background:var(--red)"></div></div>
+          <div class="row between mt">
+            <span>🕌 <b>Zakat penghasilan 2,5%</b>
+              <label class="hint" style="cursor:pointer"><input type="checkbox" id="khlZakatOn" style="width:auto" ${zakatOn?'checked':''} onchange="(function(){const c=KHL.cfg();c.zakatOn=document.getElementById('khlZakatOn').checked;KHL.saveCfg(c);App.navigate();})()"> ikutkan</label>
+              <span class="hint">${nisabBulanan!=null?`· nisab ${U.rp(nisabBulanan)}/bln (85 gr emas ÷ 12, harga emas live) → ${wajibZakat?'<b class="up">mencapai nisab, wajib</b>':'<b>di bawah nisab — tidak wajib</b>'}`:'· nisab: 85 gr emas/tahun (harga emas gagal dimuat)'}</span></span>
+            <b class="${zakat?'down':''}">${zakat?'−'+U.rp(zakat)+'/bln':'Rp0'}</b>
+          </div>
+          <div class="bar-wrap mts"><div class="bar" style="width:${gaji&&zakat?U.clamp(zakat/gaji*100,1,100):0}%;background:var(--grn)"></div></div>
+          <div class="hint mt">📎 Sumber: <a href="https://baznas.go.id/zakatpenghasilan" target="_blank">BAZNAS — zakat penghasilan 2,5%, nisab 85 gr emas/th</a> · <a href="https://peraturan.bpk.go.id/Details/234926/uu-no-7-tahun-2021" target="_blank">UU HPP 7/2021 — tarif PPh 21 & PTKP</a>. Zakat yang dibayar via BAZNAS/LAZ resmi menjadi <b>pengurang penghasilan kena pajak</b>.</div>
+        </div>
+
         <div class="card mb">
           <div class="row between wrap">
             <h3 style="margin:0">⚖️ Budget Dinamis — bukan 50/30/20</h3>
             <span class="badge ${B.warna}" style="font-size:13px">Tier: ${B.tier} (${U.num((H.rasio||0)*100,0)}% dari KHL keluarga)</span>
           </div>
-          <div class="hint mt">Alokasi menyesuaikan <b>rasio gaji ÷ (jumlah orang × KHL)</b> — keluarga yang belum survive tidak dipaksa pola orang mapan, dan sebaliknya.</div>
+          <div class="hint mt">Alokasi menyesuaikan <b>rasio gaji ÷ (jumlah orang × KHL)</b>, dan dihitung dari <b>gaji NETTO ${U.rp(netto)}</b> (setelah pajak & zakat).</div>
           <div class="alert info mt">${B.pesan}</div>
           ${gaji && alokasiPokok < H.khlKeluarga*0.8 && H.rasio < 1.5 ? `<div class="alert warn mt">⚠ Alokasi kebutuhan pokok ${U.rp(alokasiPokok)} masih di bawah kebutuhan keluarga ${U.rp(H.khlKeluarga)} — tutup selisihnya dgn menekan pos lain / tambah penghasilan.</div>` : ''}
           <div class="mt">
             ${Object.entries(B.a).map(([k,v])=>`
-              <div class="row between mts"><span>${k} <span class="hint">(${v}%)</span>${k==='Kebutuhan pokok'?`<span class="hint"> — vs KHL keluarga ${U.rp(H.khlKeluarga)}</span>`:''}</span><b>${gaji?U.rp(gaji*v/100):v+'%'}</b></div>
+              <div class="row between mts"><span>${k} <span class="hint">(${v}% netto)</span>${k==='Kebutuhan pokok'?`<span class="hint"> — vs KHL keluarga ${U.rp(H.khlKeluarga)}</span>`:''}</span><b>${gaji?U.rp(netto*v/100):v+'%'}</b></div>
               <div class="bar-wrap mts"><div class="bar" style="width:${v}%;background:${v>=40?'var(--red)':v>=20?'var(--yel)':'var(--grn)'}"></div></div>`).join('')}
           </div>
         </div>
