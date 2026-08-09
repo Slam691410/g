@@ -198,12 +198,17 @@ const MARKETPLACES = [
   { id: 'ebay',      nama: 'eBay',       search: q => 'https://www.ebay.com/sch/i.html?_nkw=' + encodeURIComponent(q) }
 ];
 
-/* Skema komisi platform */
+/* Skema komisi platform (nilai efektif diambil dari settings server)
+ * - Klik link afiliasi   : STATISTIK saja, tidak bernilai uang (anti-fraud).
+ * - produkUser           : porsi PENGGUNA dari payout jaringan afiliasi eksternal
+ *                          saat pembelian TERVERIFIKASI (postback); sisanya porsi sistem.
+ * - Langganan grup       : 100% menjadi pendapatan kreator grup (tanpa potongan sistem).
+ * - membershipRef        : komisi referral, dibayar sistem hanya jika referral
+ *                          benar-benar mendaftar & membayar membership.
+ */
 const KOMISI = {
-  produkUser: 0.05,   // estimasi komisi afiliasi produk utk pengguna (per konversi)
-  produkSistem: 0.02, // porsi sistem dari link terbungkus
-  grupSistem: 0.10,   // potongan platform dari langganan grup
-  membershipRef: 0.30 // komisi referral membership utk pengguna
+  produkUser: 0.70,
+  membershipRef: 0.30
 };
 
 /* Paket membership */

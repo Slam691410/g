@@ -32,8 +32,15 @@ const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, 'data');
 if(!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-/* ---------------- Konstanta bisnis (default; bisa dioverride settings admin) ---------------- */
-const DEFAULT_KOMISI = { produkUser: 0.05, produkSistem: 0.02, grupSistem: 0.10, membershipRef: 0.30 };
+/* ---------------- Konstanta bisnis (default; bisa dioverride settings admin) ----------------
+ * MODEL KOMISI (fair, tidak merugikan sistem):
+ *  - Klik link afiliasi  = statistik saja, TIDAK bernilai uang.
+ *  - Komisi produk       = hanya saat jaringan afiliasi eksternal mengonfirmasi pembelian
+ *                          via POSTBACK; payout dari jaringan dibagi: pengguna 70%, sistem 30%.
+ *  - Langganan grup      = 100% pendapatan kreator grup (sistem tidak memotong).
+ *  - Referral membership = 30% dibayar sistem dari pembayaran membership yang NYATA terjadi.
+ */
+const DEFAULT_KOMISI = { produkUser: 0.70, membershipRef: 0.30 };
 const DEFAULT_PLANS = { free: 0, pro: 49000, elite: 129000 };
 
 /* ---------------- Database ---------------- */
@@ -131,8 +138,16 @@ function kvUserSet(uidNum, key, value){
 function settings(){
   const r = db.prepare('SELECT value FROM kv_shared WHERE key=?').get('settings');
   const s = r ? J(r.value, {}) : {};
+  // pastikan konfigurasi afiliasi eksternal ada (kunci postback rahasia utk jaringan)
+  if(!s.affiliate || !s.affiliate.postbackKey){
+    s.affiliate = Object.assign({ networks: [] }, s.affiliate || {}, { postbackKey: (s.affiliate && s.affiliate.postbackKey) || crypto.randomBytes(12).toString('hex') });
+    db.prepare(`INSERT INTO kv_shared(key,value,updated_at) VALUES('settings',?,?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
+      .run(JSON.stringify(s), now());
+  }
   return { komisi: Object.assign({}, DEFAULT_KOMISI, s.komisi || {}),
-           plans: Object.assign({}, DEFAULT_PLANS, s.plans || {}), raw: s };
+           plans: Object.assign({}, DEFAULT_PLANS, s.plans || {}),
+           affiliate: s.affiliate, raw: s };
 }
 function affCodeOf(uidNum){
   const m = kvUserGet(uidNum, 'membership') || {};
@@ -206,7 +221,10 @@ function sharedFor(user){
     ledRows = db.prepare('SELECT * FROM ledger WHERE user=? OR kode=? ORDER BY at DESC LIMIT 500').all(user.username, code);
   }
   const s = settings();
-  return { posts, groups, ledger: ledRows.map(rowLedger), settings: { komisi: s.komisi, plans: s.plans } };
+  const shared = { posts, groups, ledger: ledRows.map(rowLedger),
+    settings: { komisi: s.komisi, plans: s.plans } };
+  if(user.role === 'admin') shared.settings.affiliate = s.affiliate; // kunci postback hanya utk admin
+  return shared;
 }
 
 /* ============================ API ROUTER ============================ */
@@ -248,7 +266,7 @@ async function api(req, res, url, ip){
     return send(res, 200, { ok: true });
   }
 
-  /* ---------- Klik afiliasi (publik, dari go.html) ---------- */
+  /* ---------- Klik afiliasi (publik, dari go.html) — STATISTIK SAJA, Rp0 ---------- */
   if(p === '/api/click' && req.method === 'POST'){
     if(!rateLimit(ip, 'click', 60, 60000)) return send(res, 429, { error: 'Terlalu cepat' });
     const b = await readBody(req);
@@ -256,8 +274,56 @@ async function api(req, res, url, ip){
     db.prepare('INSERT INTO clicks(kode,kanal,url,at) VALUES(?,?,?,?)').run(kode, kanal, urlP, now());
     const owner = findUserByAffCode(kode);
     insertLedger({ tipe: 'klik-afiliasi', kanal: kanal || 'produk', kode, user: owner ? owner.username : '',
-      url: urlP.slice(0, 300), status: 'klik tercatat (server)' });
+      url: urlP.slice(0, 300), jumlah: null, status: 'statistik klik — tidak bernilai komisi' });
     return send(res, 200, { ok: true });
+  }
+
+  /* ---------- Deeplink builder (publik) — bungkus URL produk dgn template jaringan afiliasi ---------- */
+  if(p === '/api/deeplink' && req.method === 'GET'){
+    const target = url.searchParams.get('url') || '';
+    const subid = str(url.searchParams.get('subid'), 20);
+    let tu; try{ tu = new URL(target); }catch(e){ return send(res, 400, { error: 'URL tidak valid' }); }
+    const S0 = settings();
+    const net = (S0.affiliate.networks || []).find(n => n.domain && tu.hostname.endsWith(n.domain));
+    if(net && net.template){
+      const finalUrl = net.template.replace('{url}', encodeURIComponent(target)).replace('{subid}', encodeURIComponent(subid));
+      return send(res, 200, { finalUrl, network: net.domain, wrapped: true });
+    }
+    return send(res, 200, { finalUrl: target, wrapped: false,
+      note: 'Belum ada template jaringan afiliasi utk domain ini (atur di Panel Admin → Afiliasi Eksternal)' });
+  }
+
+  /* ---------- POSTBACK jaringan afiliasi eksternal (publik + kunci rahasia) ----------
+   * Dipanggil server jaringan (S2S) saat pembelian TERKONFIRMASI:
+   *   GET/POST /api/affiliate/postback?key=<postbackKey>&sub_id=<kodeAffUser>
+   *        &amount=<payoutRp>&order_id=<idUnik>&network=<nama>&status=approved
+   * Payout dibagi: pengguna (produkUser%) + sistem (sisanya). Duplikat order_id ditolak.
+   */
+  if(p === '/api/affiliate/postback'){
+    const S0 = settings();
+    const q = url.searchParams;
+    const b = req.method === 'POST' ? await readBody(req).catch(() => ({})) : {};
+    const g = k => str(q.get(k) != null ? q.get(k) : b[k], 60);
+    if(g('key') !== S0.affiliate.postbackKey) return send(res, 403, { error: 'Kunci postback salah' });
+    const status = (g('status') || 'approved').toLowerCase();
+    if(status !== 'approved' && status !== 'paid') return send(res, 200, { ok: true, ignored: 'status ' + status });
+    const subId = g('sub_id'), network = g('network') || 'jaringan', orderId = g('order_id');
+    const amount = Math.round(Number(g('amount')) || 0);
+    if(!subId || amount <= 0) return send(res, 400, { error: 'sub_id & amount (payout Rp) wajib' });
+    const owner = findUserByAffCode(subId);
+    if(!owner) return send(res, 404, { error: 'sub_id tidak dikenal' });
+    if(orderId && db.prepare("SELECT id FROM ledger WHERE tipe='komisi-produk' AND url=?").get(network + ':' + orderId))
+      return send(res, 409, { error: 'order_id sudah pernah dicatat (duplikat)' });
+    const userShare = Math.round(amount * S0.komisi.produkUser);
+    const sysShare = amount - userShare;
+    const pairId = uid();
+    insertLedger({ tipe: 'komisi-produk', kanal: network, kode: subId, user: owner.username,
+      jumlah: userShare, status: 'pembelian terverifikasi (postback)', pairId, url: orderId ? network + ':' + orderId : '',
+      detail: `Payout jaringan Rp${amount.toLocaleString('id-ID')} → porsi pengguna ${Math.round(S0.komisi.produkUser * 100)}%` });
+    insertLedger({ tipe: 'fee-sistem', kanalTipe: 'produk', kanal: network, kode: 'SISTEM', user: 'SISTEM',
+      jumlah: sysShare, status: 'pendapatan sistem (afiliasi eksternal)', pairId,
+      detail: `Porsi sistem ${100 - Math.round(S0.komisi.produkUser * 100)}% dari payout Rp${amount.toLocaleString('id-ID')}` });
+    return send(res, 200, { ok: true, userShare, sysShare });
   }
 
   /* ---------- Butuh login ---------- */
@@ -360,12 +426,10 @@ async function api(req, res, url, ip){
     if(g.tipe === 'langganan' && g.ownerUser !== user.username){
       const exp = new Date(); exp.setMonth(exp.getMonth() + 1);
       g.subs.push({ by: user.username, at: now(), until: exp.toISOString(), harga: g.harga });
-      const fee = Math.round(g.harga * S.komisi.grupSistem);
-      const pairId = uid();
-      insertLedger({ tipe: 'langganan-grup', kanal: g.nama, user: g.ownerUser || g.owner, jumlah: g.harga - fee,
-        status: 'komisi kreator', pairId, detail: `Langganan oleh @${user.username}: Rp${g.harga.toLocaleString('id-ID')} − fee sistem Rp${fee.toLocaleString('id-ID')}` });
-      insertLedger({ tipe: 'fee-sistem', kanalTipe: 'grup', kanal: g.nama, kode: 'SISTEM', user: 'SISTEM', jumlah: fee,
-        status: 'pendapatan sistem', pairId, detail: `Fee platform ${S.komisi.grupSistem * 100}% dari langganan grup` });
+      // 100% pendapatan langganan menjadi milik kreator grup — sistem TIDAK memotong
+      insertLedger({ tipe: 'langganan-grup', kanal: g.nama, user: g.ownerUser || g.owner, jumlah: g.harga,
+        status: 'pendapatan kreator (100%)',
+        detail: `Langganan oleh @${user.username}: Rp${g.harga.toLocaleString('id-ID')} — penuh ke pembuat grup, tanpa potongan sistem` });
     }
     if(!g.members.includes(user.username)) g.members.push(user.username);
     db.prepare('UPDATE groups SET members=?, subs=? WHERE id=?').run(JSON.stringify(g.members), JSON.stringify(g.subs), g.id);
@@ -406,21 +470,8 @@ async function api(req, res, url, ip){
     }
     return send(res, 200, { ok: true, membership: mem });
   }
-  if(p === '/api/affiliate/convert' && req.method === 'POST'){
-    const b = await readBody(req);
-    const code = affCodeOf(user.id);
-    const klik = db.prepare("SELECT * FROM ledger WHERE tipe='klik-afiliasi' AND kode=? ORDER BY at DESC LIMIT 1").get(code);
-    if(!klik) return send(res, 400, { error: 'Belum ada klik link afiliasi milik Anda — bagikan konten dengan keranjang dulu' });
-    const nilai = Math.max(1000, Math.round(Number(b.nilai) || 250000));
-    const pairId = uid();
-    insertLedger({ tipe: 'komisi-produk', kanal: klik.kanal, kode: code, user: user.username,
-      jumlah: Math.round(nilai * S.komisi.produkUser), status: 'estimasi konversi', pairId,
-      detail: `Konversi Rp${nilai.toLocaleString('id-ID')} → komisi ${S.komisi.produkUser * 100}%` });
-    insertLedger({ tipe: 'fee-sistem', kanalTipe: 'produk', kanal: klik.kanal, kode: 'SISTEM', user: 'SISTEM',
-      jumlah: Math.round(nilai * S.komisi.produkSistem), status: 'pendapatan sistem', pairId,
-      detail: `Porsi sistem ${S.komisi.produkSistem * 100}% dari konversi` });
-    return send(res, 200, { ok: true });
-  }
+  /* (Catatan: komisi produk TIDAK bisa dibuat manual oleh pengguna —
+     hanya lahir dari /api/affiliate/postback yang dipanggil jaringan afiliasi eksternal.) */
 
   /* ---------- Koleksi bersama: settings (admin) & moderasi massal (admin) ---------- */
   if((m = p.match(/^\/api\/data\/shared\/(settings|posts|groups|ledger)$/))){

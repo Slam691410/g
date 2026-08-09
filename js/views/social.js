@@ -14,7 +14,7 @@ const Social = {
   openCartPicker(postId){
     Modal.open(`
       <h3>🛒 Keranjang Afiliasi</h3>
-      <div class="hint">Tautkan produk dari <b>jutaan produk marketplace eksternal seluruh dunia</b>. Link otomatis <b>dibungkus sistem</b> (go.html) — komisi tercatat untuk Anda (${(KOMISI.produkUser*100)}%) dan sistem (${(KOMISI.produkSistem*100)}%), lalu pengunjung dialihkan ke produk aslinya.</div>
+      <div class="hint">Tautkan produk dari <b>jutaan produk marketplace eksternal seluruh dunia</b>. Link otomatis <b>dibungkus sistem</b> — sistem terdaftar di program/jaringan afiliasi eksternal, dan saat ada <b>pembelian terverifikasi</b> (dikonfirmasi jaringan via postback), payout komisinya dibagi: <b>Anda ${Math.round(KOMISI.produkUser*100)}%</b> + sistem ${100-Math.round(KOMISI.produkUser*100)}%. Klik saja tidak menghasilkan komisi.</div>
       <label class="fl">Cari produk (buka marketplace asli, salin URL produknya)</label>
       <div class="row"><input id="cartQ" placeholder="mis. sepatu lari, kamera mirrorless, skincare…"></div>
       <div class="pill-row mts" id="cartMkts"></div>
@@ -99,7 +99,7 @@ const Social = {
       </select>
       <div id="grpHargaWrap" style="display:none">
         <label class="fl">Harga langganan / bulan (Rp)</label><input id="grpHarga" type="number" placeholder="25000">
-        <div class="hint mts">Sistem memotong ${(KOMISI.grupSistem*100)}% biaya platform; sisanya jadi pendapatan Anda (lihat modul Membership).</div>
+        <div class="hint mts">💯 <b>100% pendapatan langganan menjadi milik Anda</b> — pembayar membayar langsung ke Anda sebagai pembuat grup; sistem tidak memotong apa pun.</div>
       </div>
       <button class="btn mt" onclick="Social.createGroup()">Buat Grup</button>`);
   },
@@ -222,9 +222,10 @@ App.register('social', 'Sosial Hub', function(el){
           <b style="font-size:12.5px">🛒 Keranjang — produk terkait (link dibungkus sistem)</b>
           ${p.cart.map(c=>`
             <div class="cart-item">
-              <div><b>${U.esc(c.nama)}</b>${c.harga?`<div class="hint">${U.rp(c.harga)} · est. komisi Anda ${U.rp(c.harga*KOMISI.produkUser)} + sistem ${U.rp(c.harga*KOMISI.produkSistem)}</div>`:''}</div>
+              <div><b>${U.esc(c.nama)}</b>${c.harga?`<div class="hint">${U.rp(c.harga)}</div>`:''}</div>
               <a class="btn sm grn" href="${wrapLink(c.url,'konten')}" target="_blank" rel="noopener">Beli ➜</a>
             </div>`).join('')}
+          <div class="hint mts">Komisi dibagikan hanya saat pembelian <b>terverifikasi</b> oleh jaringan afiliasi (Anda ${Math.round(KOMISI.produkUser*100)}% dari payout). Klik = statistik saja.</div>
         </div>` : ''}
       <div class="post-actions">
         <span onclick="Social.like('${p.id}')">👍 ${p.likes||0}</span>

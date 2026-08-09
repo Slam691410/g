@@ -16,13 +16,6 @@ const Member = {
   copyAff(){
     const link = location.origin + location.pathname + '#/membership?ref=' + affCode();
     navigator.clipboard.writeText(link).then(()=>Toast.show('Link afiliasi tersalin 📋'));
-  },
-  async simulasiKonversi(){
-    try{
-      await Store.api('/api/affiliate/convert', { method:'POST', body:{} });
-      await Store.refreshShared();
-      Toast.show('Konversi tercatat — komisi dihitung server ✔'); App.navigate();
-    }catch(e){ Toast.show(e.message); }
   }
 };
 
@@ -67,20 +60,23 @@ App.register('membership', 'Membership & Komisi', function(el){
     <div class="grid g2 mb">
       <div class="card">
         <h3>🔗 Link Afiliasi Kamu</h3>
-        <div class="hint">Bagikan — setiap pendaftaran membership lewat link ini memberimu komisi <b>${KOMISI.membershipRef*100}%</b>. Semua link produk di kontenmu juga otomatis terbungkus sistem (komisi kamu ${KOMISI.produkUser*100}% + sistem ${KOMISI.produkSistem*100}%).</div>
+        <div class="hint">
+          • <b>Referral membership</b>: bagikan link ini — komisi <b>${Math.round(KOMISI.membershipRef*100)}%</b> dibayar sistem <b>hanya jika</b> orang tersebut benar-benar mendaftar & membayar membership.<br>
+          • <b>Produk konten</b>: link produk di kontenmu dibungkus lewat program afiliasi eksternal yang diikuti sistem. Saat jaringan mengonfirmasi <b>pembelian nyata</b> (postback), payout dibagi: kamu <b>${Math.round(KOMISI.produkUser*100)}%</b>, sistem ${100-Math.round(KOMISI.produkUser*100)}%.<br>
+          • <b>Klik hanyalah statistik</b> — tidak ada komisi dari klik (anti-fraud).
+        </div>
         <div class="mono mt">${location.origin + location.pathname}#/membership?ref=${affCode()}</div>
         <div class="row mt">
           <button class="btn sm" onclick="Member.copyAff()">📋 Salin link</button>
-          <button class="btn ghost sm" onclick="Member.simulasiKonversi()">⚡ Catat konversi dari klik</button>
         </div>
       </div>
       <div class="card">
-        <h3>💸 Ringkasan Komisi</h3>
-        <div class="row between mts"><span class="sub">Komisi afiliasi sistem (referral membership)</span><b class="up">${U.rp(komisiSistem)}</b></div>
-        <div class="row between mts"><span class="sub">Komisi afiliasi produk konten (${klikCount} klik tercatat)</span><b class="up">${U.rp(komisiProduk)}</b></div>
-        <div class="row between mts"><span class="sub">Komisi langganan grup Sosial Hub</span><b class="up">${U.rp(komisiGrup)}</b></div>
+        <h3>💸 Ringkasan Komisi & Pendapatan</h3>
+        <div class="row between mts"><span class="sub">Komisi referral membership (dibayar sistem)</span><b class="up">${U.rp(komisiSistem)}</b></div>
+        <div class="row between mts"><span class="sub">Komisi produk eksternal — pembelian terverifikasi (${klikCount} klik = statistik)</span><b class="up">${U.rp(komisiProduk)}</b></div>
+        <div class="row between mts"><span class="sub">Pendapatan langganan grup (100% milikmu)</span><b class="up">${U.rp(komisiGrup)}</b></div>
         <div class="divider"></div>
-        <div class="row between"><b>Total komisi</b><b class="up" style="font-size:18px">${U.rp(komisiSistem+komisiProduk+komisiGrup)}</b></div>
+        <div class="row between"><b>Total</b><b class="up" style="font-size:18px">${U.rp(komisiSistem+komisiProduk+komisiGrup)}</b></div>
       </div>
     </div>
 

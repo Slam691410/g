@@ -37,8 +37,17 @@ Database dibuat otomatis di `data/ghub.sqlite`. Akun admin bawaan: `admin / admi
 |---|---|
 | `POST /api/auth/register` `{username, password, nama}` | Daftar → `{token, user}` |
 | `POST /api/auth/login` `{username, password}` | Masuk → `{token, user}` |
-| `POST /api/click` `{kode, kanal, url}` | Catat klik link afiliasi terbungkus (dipanggil `go.html`) |
+| `POST /api/click` `{kode, kanal, url}` | Catat klik link terbungkus — **statistik saja, Rp0** (anti-fraud) |
+| `GET /api/deeplink?url=…&subid=…` | Bungkus URL produk ke format jaringan afiliasi (template admin) + Sub-ID pengguna |
+| `GET/POST /api/affiliate/postback?key=…&sub_id=…&amount=…&order_id=…` | **Webhook S2S jaringan afiliasi** — komisi produk hanya lahir dari pembelian terverifikasi; payout dibagi pengguna 70% / sistem 30% (bisa diatur); anti-duplikat via `order_id` |
 | `GET /api/relay?url=…` | Relay data pasar (allowlist host) |
+
+### Model komisi (adil & anti-fraud)
+- **Klik = statistik, Rp0.** Sistem tidak pernah membayar klik.
+- **Komisi produk** hanya dari pembelian yang **dikonfirmasi jaringan afiliasi eksternal** via postback — payout dibagi hasil pengguna/sistem.
+- **Langganan grup = 100% pendapatan kreator grup.** Sistem tidak memotong.
+- **Referral membership** (30%) dibayar sistem hanya saat referral benar-benar mendaftar & membayar.
+- Cara sistem ikut program eksternal: daftar **sekali** sebagai publisher di jaringan agregator (Involve Asia, ACCESSTRADE, Amazon Associates, AliExpress Portals, eBay EPN, Impact/CJ/Rakuten/Awin, atau Sovrn Commerce/Skimlinks untuk auto-monetize semua link) → deeplink API + Sub-ID pengguna → postback S2S. Panduannya ada di Panel Admin → Pengaturan.
 
 ### Terautentikasi (`Authorization: Bearer <token>`)
 | Endpoint | Keterangan |
@@ -47,9 +56,8 @@ Database dibuat otomatis di `data/ghub.sqlite`. Akun admin bawaan: `admin / admi
 | `PUT /api/data/user/:key` | Simpan koleksi pribadi (tasks, txs, holdings, khl_*, polis, goals, …) |
 | `POST /api/posts` / `DELETE /api/posts/:id` | Unggah / hapus konten (pemilik/admin) |
 | `POST /api/posts/:id/like` · `/comment` · `/cart` | Interaksi & keranjang afiliasi (cart: pemilik saja) |
-| `POST /api/groups` · `POST /api/groups/:id/join` | Buat grup · gabung/berlangganan — **komisi dihitung server** |
+| `POST /api/groups` · `POST /api/groups/:id/join` | Buat grup · gabung/berlangganan — **100% harga langganan tercatat sebagai pendapatan kreator** |
 | `POST /api/membership/buy` `{plan, ref}` | Daftar/perpanjang membership — pembayaran + komisi referral dihitung server |
-| `POST /api/affiliate/convert` | Catat konversi dari klik → komisi user + porsi sistem |
 
 ### Admin (role `admin`)
 | Endpoint | Keterangan |

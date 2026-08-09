@@ -61,17 +61,14 @@ const Admin = {
   ledger(){ return DB.get('ledger', []); },
   revenue(){
     const led = this.ledger();
+    // Pendapatan SISTEM: membership + porsi sistem dari payout afiliasi eksternal − referral dibayar.
+    // Langganan grup BUKAN pendapatan sistem (100% milik kreator) — ditampilkan sebagai omzet informatif.
     const membership = led.filter(l=>l.tipe==='membership').reduce((s,l)=>s+Math.abs(l.jumlah||0), 0);
-    const feeExplicit = k => led.filter(l=>l.tipe==='fee-sistem' && l.kanalTipe===k).reduce((s,l)=>s+(l.jumlah||0), 0);
-    // legacy: entri lama tanpa fee-sistem → estimasi dari entri kreator
-    const legacyGrup = led.filter(l=>l.tipe==='langganan-grup' && !l.pairId)
-      .reduce((s,l)=>s + Math.round((l.jumlah||0) / (1-KOMISI.grupSistem) * KOMISI.grupSistem), 0);
-    const legacyProduk = led.filter(l=>l.tipe==='komisi-produk' && !l.pairId)
-      .reduce((s,l)=>s + Math.round((l.jumlah||0) / KOMISI.produkUser * KOMISI.produkSistem), 0);
-    const grup = feeExplicit('grup') + legacyGrup;
-    const produk = feeExplicit('produk') + legacyProduk;
+    const produk = led.filter(l=>l.tipe==='fee-sistem').reduce((s,l)=>s+(l.jumlah||0), 0);
     const referralPaid = led.filter(l=>l.tipe==='referral-membership').reduce((s,l)=>s+(l.jumlah||0), 0);
-    return { membership, grup, produk, referralPaid, total: membership + grup + produk - referralPaid };
+    const omzetGrup = led.filter(l=>l.tipe==='langganan-grup').reduce((s,l)=>s+(l.jumlah||0), 0);
+    const komisiUserProduk = led.filter(l=>l.tipe==='komisi-produk').reduce((s,l)=>s+(l.jumlah||0), 0);
+    return { membership, produk, referralPaid, omzetGrup, komisiUserProduk, total: membership + produk - referralPaid };
   }
 };
 
@@ -86,9 +83,9 @@ Admin.register('overview', 'Ringkasan Sistem', function(el){
     </div>
     <div class="grid g4 mb">
       <div class="stat"><div class="lbl">💰 Pendapatan Membership</div><div class="val up">${U.rp(rev.membership)}</div></div>
-      <div class="stat"><div class="lbl">💰 Fee Sistem — Grup (${KOMISI.grupSistem*100}%)</div><div class="val up">${U.rp(rev.grup)}</div></div>
-      <div class="stat"><div class="lbl">💰 Fee Sistem — Produk (${KOMISI.produkSistem*100}%)</div><div class="val up">${U.rp(rev.produk)}</div></div>
-      <div class="stat"><div class="lbl">Total Pendapatan Sistem</div><div class="val" style="color:var(--yel)">${U.rp(rev.total)}</div><div class="d sub">setelah komisi referral ${U.rp(rev.referralPaid)}</div></div>
+      <div class="stat"><div class="lbl">💰 Afiliasi Eksternal — porsi sistem</div><div class="val up">${U.rp(rev.produk)}</div><div class="d sub">dari payout jaringan (postback terverifikasi)</div></div>
+      <div class="stat"><div class="lbl">Referral dibayar sistem</div><div class="val down">−${U.rp(rev.referralPaid)}</div></div>
+      <div class="stat"><div class="lbl">Total Pendapatan Sistem</div><div class="val" style="color:var(--yel)">${U.rp(rev.total)}</div><div class="d sub">omzet grup ${U.rp(rev.omzetGrup)} = 100% kreator, bukan sistem</div></div>
     </div>
     <div class="grid g2">
       <div class="card">
@@ -219,7 +216,7 @@ Admin.register('konten', 'Moderasi Konten', function(el){
             <td>${g.tipe==='langganan'?'<span class="badge b-pur">🔒 langganan</span>':'<span class="badge b-grn">gratis</span>'}</td>
             <td class="num">${g.harga?U.rp(g.harga):'—'}</td>
             <td>${(g.members||[]).length}</td><td>${subsAktif}</td>
-            <td class="num">${U.rp(omzet)} <span class="hint">(fee sistem ${U.rp(Math.round(omzet*KOMISI.grupSistem))})</span></td>
+            <td class="num">${U.rp(omzet)} <span class="hint">(100% milik kreator)</span></td>
             <td><button class="btn red sm" onclick="if(confirm('Hapus grup beserta kontennya?')){DB.set('groups',DB.get('groups',[]).filter(x=>x.id!=='${g.id}'));DB.set('posts',DB.get('posts',[]).filter(x=>x.group!=='${g.id}'));Admin.navigate();}">🗑</button></td>
           </tr>`; }).join('')}
       </table>` : '<div class="empty">Belum ada grup.</div>'}
@@ -240,11 +237,11 @@ Admin.register('keuangan', 'Keuangan & Komisi Sistem', function(el){
   el.innerHTML = `
     <div class="grid g4 mb">
       <div class="stat"><div class="lbl">Pendapatan Membership</div><div class="val up">${U.rp(rev.membership)}</div></div>
-      <div class="stat"><div class="lbl">Fee Grup (${KOMISI.grupSistem*100}%)</div><div class="val up">${U.rp(rev.grup)}</div></div>
-      <div class="stat"><div class="lbl">Fee Produk (${KOMISI.produkSistem*100}%)</div><div class="val up">${U.rp(rev.produk)}</div></div>
+      <div class="stat"><div class="lbl">Afiliasi Eksternal — porsi sistem</div><div class="val up">${U.rp(rev.produk)}</div><div class="d sub">porsi pengguna ${U.rp(rev.komisiUserProduk)}</div></div>
       <div class="stat"><div class="lbl">Komisi referral dibayar</div><div class="val down">−${U.rp(rev.referralPaid)}</div></div>
+      <div class="stat"><div class="lbl">Omzet langganan grup</div><div class="val">${U.rp(rev.omzetGrup)}</div><div class="d sub">100% kreator — bukan pendapatan sistem</div></div>
     </div>
-    <div class="alert ok mb"><b>Pendapatan bersih sistem: ${U.rp(rev.total)}</b> — membership + fee grup + fee produk − komisi referral.</div>
+    <div class="alert ok mb"><b>Pendapatan bersih sistem: ${U.rp(rev.total)}</b> = membership + porsi sistem afiliasi eksternal − referral dibayar. Klik afiliasi tidak pernah bernilai uang (anti-fraud); komisi produk hanya dari pembelian terverifikasi via postback jaringan.</div>
     <div class="card" style="overflow-x:auto">
       <div class="row between mb wrap">
         <h3 style="margin:0">📜 Buku Besar (${led.length} entri)</h3>
@@ -338,45 +335,127 @@ Admin.testAll = async ()=>{
 /* ================= PENGATURAN ================= */
 Admin.register('setting', 'Pengaturan Sistem', function(el){
   const k = KOMISI;
+  const st = Store.get('settings', {}) || {};
+  const aff = st.affiliate || {};
+  const nets = (aff.networks || []).map(n=>`${n.domain} | ${n.template}`).join('\n');
+  const postbackUrl = `${location.origin}/api/affiliate/postback?key=${aff.postbackKey||'…'}&sub_id={aff_code}&amount={payout_rp}&order_id={order_id}&network={network}&status=approved`;
   el.innerHTML = `
     <div class="grid g2">
       <div class="card">
-        <h3>💸 Tarif Komisi Platform</h3>
-        <div class="hint">Tersimpan di database server (koleksi <b>settings</b>) — berlaku untuk semua pengguna & transaksi baru.</div>
-        <label class="fl">Komisi produk — porsi pengguna/kreator (%)</label><input id="kProdUser" type="number" step="any" value="${k.produkUser*100}">
-        <label class="fl">Komisi produk — porsi sistem (%)</label><input id="kProdSis" type="number" step="any" value="${k.produkSistem*100}">
-        <label class="fl">Fee sistem langganan grup (%)</label><input id="kGrup" type="number" step="any" value="${k.grupSistem*100}">
-        <label class="fl">Komisi referral membership (%)</label><input id="kRef" type="number" step="any" value="${k.membershipRef*100}">
+        <h3>💸 Skema Komisi (adil & anti-fraud)</h3>
+        <div class="hint" style="line-height:1.8">
+          • Klik = <b>statistik saja, Rp0</b> — sistem tidak membayar klik<br>
+          • Komisi produk = hanya dari <b>pembelian terverifikasi</b> (postback jaringan)<br>
+          • Langganan grup = <b>100% kreator</b>, sistem tidak memotong<br>
+          • Referral membership = dibayar sistem hanya saat referral <b>benar-benar bayar</b>
+        </div>
+        <label class="fl">Bagi hasil payout afiliasi eksternal — porsi PENGGUNA (%)</label>
+        <input id="kProdUser" type="number" step="any" value="${Math.round(k.produkUser*100)}">
+        <div class="hint mts">Porsi sistem otomatis = 100% − porsi pengguna (saat ini ${100-Math.round(k.produkUser*100)}%).</div>
+        <label class="fl">Komisi referral membership (%) — dibayar dari pendapatan membership</label>
+        <input id="kRef" type="number" step="any" value="${Math.round(k.membershipRef*100)}">
         <button class="btn mt" onclick="Admin.saveKomisi()">💾 Simpan tarif ke server</button>
-      </div>
-      <div class="card">
+        <div class="divider"></div>
         <h3>⭐ Harga Paket Membership</h3>
         ${PLANS.filter(p=>p.id!=='free').map(p=>`
           <label class="fl">${p.nama} (Rp/bulan)</label><input id="plan_${p.id}" type="number" value="${p.harga}">`).join('')}
         <button class="btn mt" onclick="Admin.savePlans()">💾 Simpan harga ke server</button>
         <div class="divider"></div>
         <h3>🔐 Password Admin</h3>
-        <div class="hint">Akun: <b>@${Store.me?Store.me.username:'admin'}</b> (database server, hash scrypt)</div>
         <label class="fl">Password baru</label><input id="admNewPass" type="password" placeholder="min. 6 karakter">
         <button class="btn mt" onclick="Admin.savePass()">🔑 Ganti password</button>
       </div>
+
+      <div class="card">
+        <h3>🌍 Afiliasi Eksternal — koneksi program/jaringan</h3>
+        <div class="hint">Sistem terdaftar sebagai <b>publisher</b> di jaringan afiliasi; link produk pengguna dibungkus dengan ID sistem + <b>Sub-ID pengguna</b>, konversi masuk lewat postback di bawah.</div>
+
+        <label class="fl">🔑 Kunci Postback (rahasia — hanya untuk jaringan afiliasi)</label>
+        <div class="mono">${U.esc(aff.postbackKey||'(dibuat otomatis oleh server)')}</div>
+        <div class="row mt">
+          <button class="btn ghost sm" onclick="navigator.clipboard.writeText('${U.esc(aff.postbackKey||'')}').then(()=>Toast.show('Kunci tersalin'))">📋 Salin</button>
+          <button class="btn ghost sm" onclick="Admin.regenKey()">↻ Buat kunci baru</button>
+        </div>
+
+        <label class="fl">📮 URL Postback — daftarkan di dashboard tiap jaringan (S2S callback)</label>
+        <div class="mono" style="font-size:11px">${U.esc(postbackUrl)}</div>
+        <div class="hint mts">Jaringan memanggil URL ini saat pembelian dikonfirmasi → server otomatis membagi payout: pengguna ${Math.round(k.produkUser*100)}% + sistem ${100-Math.round(k.produkUser*100)}%. <code>order_id</code> dipakai anti-duplikat.</div>
+
+        <label class="fl">🔗 Template Deeplink per domain (1 baris: <code>domain | template</code>, gunakan {url} & {subid})</label>
+        <textarea id="affNets" rows="5" placeholder="shopee.co.id | https://invol.co/aff_m?offer_id=100325&aff_id=ID_ANDA&url={url}&sub1={subid}">${U.esc(nets)}</textarea>
+        <button class="btn mt" onclick="Admin.saveAffiliate()">💾 Simpan konfigurasi afiliasi</button>
+        <div class="divider"></div>
+        <b style="font-size:13px">🧪 Uji postback (simulasi panggilan jaringan)</b>
+        <div class="row mt">
+          <input id="tbSub" placeholder="sub_id (kode aff user, mis. GHXXXXXX)" style="flex:2">
+          <input id="tbAmt" type="number" placeholder="payout Rp" value="15000" style="flex:1">
+          <button class="btn sm" onclick="Admin.testPostback()">▶ Kirim</button>
+        </div>
+      </div>
     </div>
+
+    <div class="card mt">
+      <h3>🤝 Cara sistem "ikut & auto-daftar" program afiliasi eksternal</h3>
+      <div class="hint" style="line-height:1.8">
+        Tidak ada jalur resmi untuk auto-mendaftar ke tiap toko satu per satu — praktik industri yang benar: <b>satu pendaftaran ke jaringan agregator membuka ribuan merchant sekaligus</b>, lalu semuanya diotomasi lewat API:<br><br>
+        1️⃣ <b>Daftar sekali sebagai publisher</b> di jaringan agregator → akses ribuan program merchant dunia:<br>
+        &nbsp;&nbsp;• <a href="https://involve.asia" target="_blank">Involve Asia</a> (Shopee, Lazada, dll — populer di ID) · <a href="https://accesstrade.co.id" target="_blank">ACCESSTRADE Indonesia</a><br>
+        &nbsp;&nbsp;• <a href="https://affiliate-program.amazon.com" target="_blank">Amazon Associates</a> · <a href="https://portals.aliexpress.com" target="_blank">AliExpress Portals</a> · <a href="https://partnernetwork.ebay.com" target="_blank">eBay Partner Network</a><br>
+        &nbsp;&nbsp;• Global: <a href="https://impact.com" target="_blank">Impact</a>, <a href="https://www.cj.com" target="_blank">CJ</a>, <a href="https://rakutenadvertising.com" target="_blank">Rakuten Advertising</a>, <a href="https://www.awin.com" target="_blank">Awin</a><br>
+        2️⃣ <b>Otomasi penuh ("auto-monetize")</b>: <a href="https://sovrn.com/commerce/" target="_blank">Sovrn Commerce (Skimlinks)</a> mengubah <b>semua</b> link outbound jadi link afiliasi otomatis via satu API — paling dekat dengan konsep "auto daftar": merchant baru langsung ikut tanpa aksi tambahan.<br>
+        3️⃣ <b>Deeplink API + Sub-ID</b>: server membungkus URL produk apa pun; <code>{subid}</code> = kode afiliasi pengguna → tiap konversi teratribusi ke pengguna yang benar.<br>
+        4️⃣ <b>Postback S2S</b>: daftarkan URL postback di atas → hanya pembelian TERKONFIRMASI yang menghasilkan komisi, payout dibagi sistem–pengguna sesuai tarif.<br><br>
+        ⚠️ Persetujuan publisher tetap wewenang tiap jaringan (review 1–3 hari) — proses legal yang tak bisa dilewati, tapi hanya <b>sekali per jaringan</b>, bukan per produk/merchant.
+      </div>
+    </div>
+
     <div class="card mt">
       <h3>⚠️ Zona Berbahaya</h3>
       <div class="row wrap mt">
         <button class="btn red sm" onclick="if(confirm('Kosongkan SEMUA konten, grup, dan buku besar platform (semua pengguna)?')){DB.set('posts',[]);DB.set('groups',[]);DB.set('ledger',[]);Toast.show('Data platform bersama dikosongkan');setTimeout(()=>Admin.navigate(),600);}">🗑 Kosongkan konten & buku besar platform</button>
       </div>
-      <div class="hint mt">Akun pengguna & data pribadinya dihapus satu per satu lewat menu Pengguna & Member.</div>
     </div>`;
 });
 Admin.saveKomisi = ()=>{
-  const v = id => Math.max(0, Number(document.getElementById(id).value)||0)/100;
-  const o = { produkUser: v('kProdUser'), produkSistem: v('kProdSis'), grupSistem: v('kGrup'), membershipRef: v('kRef') };
+  const v = id => Math.max(0, Math.min(100, Number(document.getElementById(id).value)||0))/100;
+  const o = { produkUser: v('kProdUser'), membershipRef: v('kRef') };
   const s = Store.get('settings', {}) || {};
   s.komisi = o;
   Store.set('settings', s);
   Object.assign(KOMISI, o);
-  Toast.show('Tarif komisi tersimpan ke server ✔'); Admin.navigate();
+  Toast.show('Tarif tersimpan ✔ (porsi sistem = ' + (100-Math.round(o.produkUser*100)) + '% payout)'); Admin.navigate();
+};
+Admin.saveAffiliate = ()=>{
+  const s = Store.get('settings', {}) || {};
+  s.affiliate = s.affiliate || {};
+  s.affiliate.networks = document.getElementById('affNets').value.split('\n').map(l=>{
+    const parts = l.split('|');
+    const domain = (parts.shift()||'').trim().toLowerCase();
+    return { domain, template: parts.join('|').trim() };
+  }).filter(n=>n.domain && n.template);
+  Store.set('settings', s);
+  Toast.show('Konfigurasi afiliasi tersimpan (' + s.affiliate.networks.length + ' jaringan) ✔');
+};
+Admin.regenKey = ()=>{
+  if(!confirm('Buat kunci postback baru? Semua jaringan harus diupdate dengan kunci baru.')) return;
+  const s = Store.get('settings', {}) || {};
+  s.affiliate = s.affiliate || {};
+  s.affiliate.postbackKey = Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b=>b.toString(16).padStart(2,'0')).join('');
+  Store.set('settings', s);
+  Toast.show('Kunci postback baru dibuat 🔑'); setTimeout(()=>Admin.navigate(), 600);
+};
+Admin.testPostback = async ()=>{
+  const st = Store.get('settings', {}) || {};
+  const sub = document.getElementById('tbSub').value.trim();
+  const amt = Number(document.getElementById('tbAmt').value)||0;
+  if(!sub || !amt) return Toast.show('Isi sub_id & payout');
+  try{
+    const r = await fetch(`/api/affiliate/postback?key=${encodeURIComponent((st.affiliate||{}).postbackKey||'')}&sub_id=${encodeURIComponent(sub)}&amount=${amt}&order_id=TEST-${Date.now()}&network=uji-admin&status=approved`);
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+    Toast.show(`Postback OK ✔ user ${U.rp(j.userShare)} · sistem ${U.rp(j.sysShare)}`);
+    await Store.refreshShared();
+  }catch(e){ Toast.show('Postback gagal: ' + e.message); }
 };
 Admin.savePlans = ()=>{
   const o = {};

@@ -11,24 +11,34 @@
 <div class="box">
   <div class="logo">G</div>
   <h2>Link afiliasi GHub One</h2>
-  <p>Klik tercatat — komisi untuk kreator <b id="u"></b> &amp; sistem. Mengalihkan ke tujuan…</p>
+  <p>Klik tercatat sebagai <b>statistik</b> untuk kreator <b id="u"></b>. Mengalihkan ke produk lewat jaringan afiliasi…</p>
   <p class="mut" id="dest"></p>
 </div>
 <script>
-// Pembungkus link sistem: catat klik ke SERVER (komisi user + sistem) lalu redirect ke URL produk asli.
+// Pembungkus link sistem:
+// 1) catat KLIK ke server (statistik saja — tidak bernilai komisi, anti-fraud)
+// 2) minta server membungkus URL ke format jaringan afiliasi (deeplink + Sub-ID pengguna)
+// 3) redirect ke tujuan — komisi lahir hanya jika jaringan mengonfirmasi pembelian (postback)
 (function(){
   const p = new URLSearchParams(location.search);
   const u = p.get('u') || '-', c = p.get('c') || 'produk', r = p.get('r') || '';
   document.getElementById('u').textContent = u;
   document.getElementById('dest').textContent = r;
-  // Kirim ke database server (keepalive agar tetap terkirim saat halaman berpindah)
+  if(!r || !/^https?:\/\//i.test(r)){
+    document.getElementById('dest').innerHTML = 'URL tujuan tidak valid. <a href="index.html">Kembali</a>';
+    return;
+  }
   try{
     fetch('/api/click', { method: 'POST', keepalive: true,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kode: u, kanal: c, url: r }) }).catch(()=>{});
   }catch(e){}
-  if(r && /^https?:\/\//i.test(r)) setTimeout(()=>location.replace(r), 1200);
-  else document.getElementById('dest').innerHTML = 'URL tujuan tidak valid. <a href="index.html">Kembali</a>';
+  // bungkus via template jaringan afiliasi bila dikonfigurasi admin; fallback URL asli
+  fetch('/api/deeplink?url=' + encodeURIComponent(r) + '&subid=' + encodeURIComponent(u))
+    .then(x=>x.json()).then(j=>{
+      const dest = (j && j.finalUrl) ? j.finalUrl : r;
+      setTimeout(()=>location.replace(dest), 900);
+    }).catch(()=>setTimeout(()=>location.replace(r), 900));
 })();
 </script>
 </body>
