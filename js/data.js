@@ -254,6 +254,7 @@ const MODUL_INTEGRASI = {
   invest: ['sbn','yahoo','db'],
   screening: ['worldbank','yahoo','fx','coingecko','bi','rss','gnews','blacklist'],
   dividen: ['yahoo'],
+  legacy: ['db'],
   profil: ['db'],
   membership: ['affiliate','db']
 };

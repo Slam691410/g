@@ -76,7 +76,7 @@ App.register('profil', 'Profil', function(el){
 });
 
 const Profil = {
-  USER_KEYS: ['profile','membership','tasks','projects','txs','holdings','khl_cfg','khl_anak','khl_biaya','khl_kelompok','utang','polis','goals','prot_q','income_tab','khl_tab','proj_view','social_tab','scr_tab','scr_sektor','scr_fase','div_bulan'],
+  USER_KEYS: ['profile','membership','tasks','projects','txs','holdings','khl_cfg','khl_anak','khl_biaya','khl_kelompok','utang','polis','goals','pensiun','waris','hibah','prot_q','income_tab','khl_tab','legacy_tab','proj_view','social_tab','scr_tab','scr_sektor','scr_fase','div_bulan'],
   saveKeluarga(){
     const c = DB.get('khl_cfg', {});
     c.pasangan = document.getElementById('prPasangan').checked;

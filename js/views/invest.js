@@ -21,9 +21,10 @@ const Invest = {
     return sisa * i / (Math.pow(1+i, bulan) - 1);
   },
 
-  /* ---- Katalog tujuan investasi — kehidupan itu banyak tujuannya ---- */
+  /* ---- Katalog tujuan investasi — kehidupan itu banyak tujuannya ----
+   * Catatan: Dana Darurat dihitung di menu KHL (bukan di sini);
+   * Dana Pensiun, Waris & Hibah ada di menu Legacy. */
   TEMPLATES: [
-    { id:'darurat', ic:'🚨', nama:'Dana Darurat', kat:'Fondasi', th:1, inst:'rdpu', hitung(){ const g=(DB.get('khl_cfg',{}).gaji)||5000000; return g*6; }, note:'Target awal ≈ 6× pengeluaran (lihat modul KHL utk hitungan presisi tanggungan)' },
     { id:'nikah', ic:'💍', nama:'Menikah', kat:'Keluarga', th:3, inst:'rdpt', target:100000000, note:'Estimasi resepsi sederhana-menengah — sangat bervariasi, sesuaikan' },
     { id:'melahirkan', ic:'👶', nama:'Dana Melahirkan', kat:'Keluarga', th:1, inst:'rdpu', target:25000000, note:'Persalinan + kontrol kehamilan (bisa lebih rendah dgn BPJS)' },
     { id:'dprumah', ic:'🏠', nama:'DP Rumah (20%)', kat:'Properti', th:5, inst:'rdpt', target:150000000, note:'DP 20% utk rumah ±Rp750 jt — sesuaikan harga di kotamu' },
@@ -38,16 +39,16 @@ const Invest = {
     { id:'usaha', ic:'🏪', nama:'Modal Usaha', kat:'Produktif', th:3, inst:'rdpt', target:50000000 },
     { id:'s2', ic:'📚', nama:'Pendidikan Diri (S2/Sertifikasi)', kat:'Produktif', th:4, inst:'indeks', target:60000000 },
     { id:'sehat', ic:'🏥', nama:'Dana Kesehatan Orang Tua', kat:'Keluarga', th:2, inst:'rdpu', target:30000000 },
-    { id:'wakaf', ic:'🤲', nama:'Wakaf / Warisan', kat:'Sosial', th:10, inst:'indeks', target:100000000 }
+    { id:'wakaf', ic:'🤲', nama:'Wakaf / Sedekah Besar', kat:'Sosial', th:10, inst:'indeks', target:100000000 }
   ],
   openTemplates(){
     const kats = [...new Set(this.TEMPLATES.map(t=>t.kat))];
     Modal.open(`
-      <h3>🗂 Katalog Tujuan Investasi (${this.TEMPLATES.length} template + 2 otomatis)</h3>
-      <div class="hint">Hidup punya banyak tujuan — pilih, angka default terisi (estimasi awal, bisa diedit setelah dibuat).</div>
+      <h3>🗂 Katalog Tujuan Investasi (${this.TEMPLATES.length} template + otomatis)</h3>
+      <div class="hint">Hidup punya banyak tujuan — haji, kurban, liburan, rumah, kendaraan, usaha, dan banyak lagi. Pilih; angka default terisi (estimasi awal, bisa diedit). <b>Dana Darurat</b> dihitung di menu KHL · <b>Dana Pensiun/Waris/Hibah</b> di menu Legacy.</div>
       <div class="row wrap mt">
         <button class="btn grn sm" onclick="Invest.autoEdu()">🎓 Otomatis: Dana Pendidikan per Anak (dari Profil)</button>
-        <button class="btn pur sm" onclick="Invest.autoPensiun()">👴 Otomatis: Dana Pensiun (aturan 4%)</button>
+        <button class="btn ghost sm" onclick="Modal.close();location.hash='#/legacy'">👴 Dana Pensiun → menu Legacy</button>
       </div>
       ${kats.map(k=>`
         <div class="nav-sec" style="padding-left:0">${k}</div>
@@ -90,26 +91,6 @@ const Invest = {
     }
     this.save(gs); Modal.close();
     Toast.show(n ? n+' tujuan Dana Pendidikan dibuat otomatis 🎓' : 'Semua tujuan pendidikan sudah ada'); App.navigate();
-  },
-  /* 👴 Generator otomatis: pensiun dgn aturan 4% (25× pengeluaran tahunan) */
-  autoPensiun(){
-    const p = getProfile();
-    const usia = p.lahir ? U.age(p.lahir) : 30;
-    const usiaPensiun = 55;
-    if(usia >= usiaPensiun) return Toast.show('Usia sudah ≥55 — atur manual sesuai kondisi');
-    const ts = DB.get('txs', []);
-    const now = new Date();
-    const out3 = ts.filter(t=>t.tipe==='Pengeluaran' && (now - new Date(t.tgl)) < 92*864e5).reduce((s,t)=>s+t.nilai,0)/3;
-    const bulanan = out3 || ((DB.get('khl_cfg',{}).gaji||5000000) * 0.7);
-    const target = bulanan * 12 * 25;
-    const d = new Date(); d.setFullYear(d.getFullYear() + (usiaPensiun - usia));
-    const gs = this.goals();
-    if(gs.some(g=>g.kat==='Pensiun')) return Toast.show('Tujuan pensiun sudah ada');
-    gs.push({ id:U.uid(), at:new Date().toISOString(), nama:'👴 Dana Pensiun (bebas finansial '+usiaPensiun+' th)', kat:'Pensiun',
-      target: Math.round(target/1000000)*1000000, tgl: d.toISOString().slice(0,10), awal:0, now:0, inst:'indeks',
-      note:`Aturan 4% (Trinity Study): 25× pengeluaran tahunan. Basis ${U.rp(bulanan)}/bln ${out3?'(rata² pengeluaran nyata 3 bln — modul Income)':'(estimasi 70% gaji — isi Income agar presisi)'}` });
-    this.save(gs); Modal.close();
-    Toast.show('Dana Pensiun dihitung & dibuat otomatis 👴'); App.navigate();
   },
 
   openForm(id){
@@ -196,5 +177,5 @@ App.register('invest', 'Tujuan Investasi', function(el){
           <button class="btn ghost sm" onclick="Invest.openForm('${g.id}')">✏️ Edit</button>
         </div>
       </div>`; }).join('')}</div>`
-    : `<div class="empty">Belum ada tujuan investasi.<br>Buka <b>🗂 Katalog Tujuan</b> — ${Invest.TEMPLATES.length} template (menikah, DP rumah, haji, umroh, kendaraan, modal usaha, dll) + generator otomatis <b>Dana Pendidikan per anak</b> (dari tanggal lahir di Profil) & <b>Dana Pensiun</b> (aturan 4%).</div>`}`;
+    : `<div class="empty">Belum ada tujuan investasi.<br>Buka <b>🗂 Katalog Tujuan</b> — ${Invest.TEMPLATES.length} template (menikah, haji, umroh, kurban, liburan, DP rumah, kendaraan, modal usaha, dll) + generator otomatis <b>Dana Pendidikan per anak</b> (dari tanggal lahir di Profil).<br><span class="hint">Dana Darurat → menu KHL · Dana Pensiun, Waris & Hibah → menu Legacy.</span></div>`}`;
 });

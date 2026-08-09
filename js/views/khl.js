@@ -320,18 +320,27 @@ App.register('khl', 'KHL & Budget Dinamis', function(el){
     else { // budget dinamis
       const B = KHL.budgetDinamis(H.rasio || 0);
       const gaji = H.c.gaji || 0;
+      const pokokPct = B.a['Kebutuhan pokok'] || 0;
+      const alokasiPokok = gaji * pokokPct / 100;
       body.innerHTML = `
         ${gaji ? '' : `<div class="alert warn mb">Isi gaji & profil di tab <a href="#" onclick="KHL.setTab('khl');return false">UMR vs KHL</a> dulu agar alokasi dihitung.</div>`}
+        <div class="grid g3 mb">
+          <div class="stat"><div class="lbl">Basis: KHL keluarga = jumlah orang × KHL</div><div class="val">${U.rp(H.khlKeluarga)}</div>
+            <div class="d sub">KHL lajang ${U.rp(H.khlSatu)} × skala ${U.num(H.faktor,1)} orang-setara + sekolah ${U.rp(H.biayaSek)}</div></div>
+          <div class="stat"><div class="lbl">Gaji</div><div class="val">${gaji?U.rp(gaji):'—'}</div></div>
+          <div class="stat"><div class="lbl">Rasio Gaji ÷ KHL keluarga</div><div class="val ${H.rasio>=1?'up':'down'}">${gaji?U.num(H.rasio*100,0)+'%':'—'}</div></div>
+        </div>
         <div class="card mb">
           <div class="row between wrap">
             <h3 style="margin:0">⚖️ Budget Dinamis — bukan 50/30/20</h3>
-            <span class="badge ${B.warna}" style="font-size:13px">Tier: ${B.tier} (${U.num((H.rasio||0)*100,0)}% dari KHL)</span>
+            <span class="badge ${B.warna}" style="font-size:13px">Tier: ${B.tier} (${U.num((H.rasio||0)*100,0)}% dari KHL keluarga)</span>
           </div>
-          <div class="hint mt">Alokasi menyesuaikan <b>rasio gaji ÷ KHL keluarga</b> — keluarga yang belum survive tidak dipaksa pola orang mapan, dan sebaliknya.</div>
+          <div class="hint mt">Alokasi menyesuaikan <b>rasio gaji ÷ (jumlah orang × KHL)</b> — keluarga yang belum survive tidak dipaksa pola orang mapan, dan sebaliknya.</div>
           <div class="alert info mt">${B.pesan}</div>
+          ${gaji && alokasiPokok < H.khlKeluarga*0.8 && H.rasio < 1.5 ? `<div class="alert warn mt">⚠ Alokasi kebutuhan pokok ${U.rp(alokasiPokok)} masih di bawah kebutuhan keluarga ${U.rp(H.khlKeluarga)} — tutup selisihnya dgn menekan pos lain / tambah penghasilan.</div>` : ''}
           <div class="mt">
             ${Object.entries(B.a).map(([k,v])=>`
-              <div class="row between mts"><span>${k} <span class="hint">(${v}%)</span></span><b>${gaji?U.rp(gaji*v/100):v+'%'}</b></div>
+              <div class="row between mts"><span>${k} <span class="hint">(${v}%)</span>${k==='Kebutuhan pokok'?`<span class="hint"> — vs KHL keluarga ${U.rp(H.khlKeluarga)}</span>`:''}</span><b>${gaji?U.rp(gaji*v/100):v+'%'}</b></div>
               <div class="bar-wrap mts"><div class="bar" style="width:${v}%;background:${v>=40?'var(--red)':v>=20?'var(--yel)':'var(--grn)'}"></div></div>`).join('')}
           </div>
         </div>
