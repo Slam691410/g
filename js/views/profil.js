@@ -1,6 +1,8 @@
-/* ========== Profil: data pribadi & preferensi ========== */
+/* ========== Profil: data pribadi, keluarga & tanggungan ========== */
 App.register('profil', 'Profil', function(el){
   const p = getProfile();
+  const kc = DB.get('khl_cfg', { pasangan:false, tanggunganLain:0 });
+  const anak = DB.get('khl_anak', []);
   el.innerHTML = `
     <div class="grid g2">
       <div class="card">
@@ -30,11 +32,33 @@ App.register('profil', 'Profil', function(el){
       </div>
       <div>
         <div class="card mb">
+          <h3>👨‍👩‍👧 Keluarga & Tanggungan <span class="badge b-cyn">dipakai modul KHL, Proteksi & Tujuan Investasi</span></h3>
+          <div class="row wrap">
+            <label class="row" style="gap:5px;font-size:13px"><input type="checkbox" id="prPasangan" style="width:auto" ${kc.pasangan?'checked':''} onchange="Profil.saveKeluarga()"> Punya pasangan</label>
+            <div class="row" style="gap:6px;flex:1;min-width:180px">
+              <label class="fl" style="margin:0;white-space:nowrap">Tanggungan dewasa lain</label>
+              <input id="prTanggungan" type="number" min="0" value="${kc.tanggunganLain||0}" style="width:70px" onchange="Profil.saveKeluarga()" title="orang tua, adik/kakak, kerabat yang Anda tanggung">
+            </div>
+          </div>
+          <div class="divider"></div>
+          <div class="row between wrap">
+            <b style="font-size:13px">👶 Data Anak (${anak.length})</b>
+            <button class="btn sm" onclick="KHL.addAnak()">＋ Tambah anak</button>
+          </div>
+          ${anak.length ? anak.map(a=>`
+            <div class="row between mts" style="border-bottom:1px solid rgba(35,46,78,.6);padding-bottom:7px">
+              <span><b>${U.esc(a.nama)}</b> <span class="hint">· lahir ${U.dt(a.lahir)} (${U.age(a.lahir)} th) · sekolah ${a.sek}</span></span>
+              <button class="btn ghost sm" onclick="KHL.delAnak('${a.id}')">🗑</button>
+            </div>`).join('')
+          : `<div class="hint mts">Belum ada data anak. Tanggal lahir anak dipakai otomatis untuk: jalur & biaya sekolah (KHL), skala kebutuhan keluarga, dan tujuan Dana Pendidikan.</div>`}
+        </div>
+        <div class="card mb">
           <h3>🔗 Terhubung dengan modul lain</h3>
           <div class="hint" style="line-height:1.8">
             • <b>Provinsi</b> → default perbandingan UMP/KHL<br>
             • <b>Penghasilan</b> → basis rekomendasi Proteksi & Budget<br>
-            • <b>Tanggal lahir</b> → usia untuk premi asuransi<br>
+            • <b>Pasangan, tanggungan & anak</b> → Kebutuhan Keluarga (KHL), UP asuransi, Dana Pendidikan & Pensiun<br>
+            • <b>Tanggal lahir</b> → usia untuk premi asuransi & rencana pensiun<br>
             • <b>Nama</b> → identitas konten Sosial Hub & grup
           </div>
         </div>
@@ -52,7 +76,14 @@ App.register('profil', 'Profil', function(el){
 });
 
 const Profil = {
-  USER_KEYS: ['profile','membership','tasks','projects','txs','holdings','khl_cfg','khl_anak','khl_biaya','utang','polis','goals','prot_q','income_tab','khl_tab','proj_view','social_tab','scr_tab','scr_sektor','scr_fase','div_bulan'],
+  USER_KEYS: ['profile','membership','tasks','projects','txs','holdings','khl_cfg','khl_anak','khl_biaya','khl_kelompok','utang','polis','goals','prot_q','income_tab','khl_tab','proj_view','social_tab','scr_tab','scr_sektor','scr_fase','div_bulan'],
+  saveKeluarga(){
+    const c = DB.get('khl_cfg', {});
+    c.pasangan = document.getElementById('prPasangan').checked;
+    c.tanggunganLain = Math.max(0, Number(document.getElementById('prTanggungan').value)||0);
+    DB.set('khl_cfg', c);
+    Toast.show('Data keluarga tersimpan — otomatis dipakai KHL, Proteksi & Tujuan Investasi ✔');
+  },
   save(){
     const p = {
       nama: document.getElementById('prNama').value.trim(),

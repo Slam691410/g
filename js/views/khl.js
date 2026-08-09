@@ -4,7 +4,7 @@ const KHL = {
   tab: DB.get('khl_tab', 'khl'),
   setTab(t){ this.tab = t; DB.set('khl_tab', t); App.navigate(); },
 
-  cfg(){ return DB.get('khl_cfg', { provinsi: getProfile().provinsi || 'DKI Jakarta', gaji: 0, pasangan: false, pasanganKerja: false }); },
+  cfg(){ return DB.get('khl_cfg', { provinsi: getProfile().provinsi || 'DKI Jakarta', gaji: 0, pasangan: false, tanggunganLain: 0 }); },
   saveCfg(c){ DB.set('khl_cfg', c); },
 
   /* ---- DATA KHL (terpisah dari UMP!) — 7 kelompok, 64 komponen (Permenaker 18/2020) ---- */
@@ -36,7 +36,7 @@ const KHL = {
     c.provinsi = document.getElementById('khlProv').value;
     c.gaji = Number(document.getElementById('khlGaji').value)||0;
     c.pasangan = document.getElementById('khlPas').checked;
-    c.pasanganKerja = document.getElementById('khlPasKerja') ? document.getElementById('khlPasKerja').checked : false;
+    c.tanggunganLain = document.getElementById('khlTgl') ? Math.max(0, Number(document.getElementById('khlTgl').value)||0) : (c.tanggunganLain||0);
     this.saveCfg(c); App.navigate();
   },
 
@@ -114,7 +114,7 @@ const KHL = {
     const khlLajangRaw = Object.values(vals).reduce((a,b)=>a+(Number(b)||0),0);
     const khlSatu = khlLajangRaw * adj;
     const anak = this.anak();
-    let faktor = EQUIV.kepala + (c.pasangan ? EQUIV.dewasa : 0);
+    let faktor = EQUIV.kepala + (c.pasangan ? EQUIV.dewasa : 0) + (c.tanggunganLain||0) * EQUIV.dewasa;
     let biayaSek = 0; const detail = [];
     const biaya = this.biaya();
     for(const a of anak){
@@ -180,27 +180,30 @@ App.register('khl', 'KHL & Budget Dinamis', function(el){
     if(tab==='khl'){
       body.innerHTML = `
         <div class="card mb">
-          <h3>⚙️ Profil Keluarga</h3>
-          <div class="grid g3">
+          <h3>⚙️ Profil Keluarga <span class="badge b-cyn">tersinkron dengan menu Profil</span></h3>
+          <div class="grid g4">
             <div><label class="fl">Provinsi (UMP resmi 2026)</label>
               <select id="khlProv" onchange="KHL.updateCfg()">${Object.keys(UMP2026.data).map(p=>`<option ${H.c.provinsi===p?'selected':''}>${p}</option>`).join('')}</select></div>
             <div><label class="fl">Gaji bulanan Anda (Rp)</label>
               <input id="khlGaji" type="number" value="${H.c.gaji||''}" placeholder="mis. 6000000" onchange="KHL.updateCfg()"></div>
+            <div><label class="fl">Tanggungan dewasa lain</label>
+              <input id="khlTgl" type="number" min="0" value="${H.c.tanggunganLain||0}" onchange="KHL.updateCfg()" title="orang tua, adik, dll yang Anda tanggung"></div>
             <div><label class="fl">Pasangan</label>
               <div class="row" style="padding-top:8px">
                 <label class="row" style="gap:5px;font-size:13px"><input type="checkbox" id="khlPas" style="width:auto" ${H.c.pasangan?'checked':''} onchange="KHL.updateCfg()"> Punya pasangan</label>
               </div></div>
           </div>
+          <div class="hint mts">Tanggungan dewasa lain = orang tua, adik/kakak, atau kerabat yang hidupnya Anda tanggung (masing-masing +0,5 skala kebutuhan).</div>
         </div>
 
         <div class="alert info mb">
-          ⚖️ <b>UMP ≠ KHL — dua konteks berbeda, data terpisah.</b> UMP = ketetapan upah minimum pemerintah (formula PP 49/2025). KHL = kebutuhan hidup layak versi <b>Permenaker 18/2020: 64 komponen dalam 7 kelompok</b>, yang nilainya seharusnya disurvei dari harga pasar daerah — di bawah bisa Anda isi sesuai harga nyata di daerahmu.
+          ⚖️ <b>UMP ≠ KHL — dua konteks berbeda, data terpisah.</b> UMP = ketetapan upah minimum pemerintah (formula PP 49/2025). KHL versi resmi <b>Permenaker 18/2020 (64 komponen, 7 kelompok) memang dihitung untuk 1 orang pekerja lajang</b> — tapi kita tidak hidup sendiri, maka sistem menambah lapisan terpisah: <b>Kebutuhan Keluarga</b> = KHL lajang × skala tanggungan (pasangan, tanggungan dewasa lain, anak) + biaya sekolah anak.
         </div>
 
         <div class="grid g4 mb">
           <div class="stat"><div class="lbl">📌 UMP ${H.c.provinsi} (resmi)</div><div class="val">${U.rp(H.ump)}</div><div class="d sub">konteks: upah minimum</div></div>
-          <div class="stat"><div class="lbl">🧺 KHL lajang (64 komponen + inflasi)</div><div class="val">${U.rp(H.khlSatu)}</div><div class="d sub">×${U.num(H.adj,4)} penyesuaian inflasi</div></div>
-          <div class="stat"><div class="lbl">👨‍👩‍👧 KHL keluarga (×${U.num(H.faktor,1)} + sekolah)</div><div class="val">${U.rp(H.khlKeluarga)}</div><div class="d sub">${H.anak.length} anak · sekolah ${U.rp(H.biayaSek)}/bln</div></div>
+          <div class="stat"><div class="lbl">🧺 KHL resmi — 1 orang lajang</div><div class="val">${U.rp(H.khlSatu)}</div><div class="d sub">64 komponen · ×${U.num(H.adj,4)} inflasi</div></div>
+          <div class="stat"><div class="lbl">👨‍👩‍👧 Kebutuhan Keluarga (×${U.num(H.faktor,1)} + sekolah)</div><div class="val">${U.rp(H.khlKeluarga)}</div><div class="d sub">${H.c.pasangan?'pasangan · ':''}${H.c.tanggunganLain?H.c.tanggunganLain+' tanggungan dewasa · ':''}${H.anak.length} anak · sekolah ${U.rp(H.biayaSek)}/bln</div></div>
           <div class="stat"><div class="lbl">Gaji vs KHL keluarga</div>
             <div class="val ${H.rasio>=1?'up':'down'}">${H.c.gaji?U.num(H.rasio*100,0)+'%':'—'}</div>
             <div class="d ${H.rasio>=1?'up':'down'}">${H.c.gaji ? (H.rasio>=1 ? 'di atas KHL ✔' : 'DI BAWAH KHL ⚠') : 'isi gaji dulu'}</div></div>

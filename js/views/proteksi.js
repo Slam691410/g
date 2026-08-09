@@ -2,7 +2,16 @@
 const Prot = {
   polis(){ return DB.get('polis', []); },
   save(p){ DB.set('polis', p); },
-  q(){ return DB.get('prot_q', { usia: 30, merokok: false, tanggungan: 0, utang: 0, bpjs: false, kesehatanSwasta: false, jiwa: false, asetLikuid: 0 }); },
+  q(){
+    const saved = DB.get('prot_q', null);
+    if(saved) return saved;
+    // default tanggungan otomatis dari data keluarga di Profil (pasangan + anak + tanggungan dewasa lain)
+    const kc = DB.get('khl_cfg', {});
+    const p = getProfile();
+    return { usia: p.lahir ? U.age(p.lahir) : 30, merokok: false,
+      tanggungan: (DB.get('khl_anak', []).length + (kc.pasangan ? 1 : 0) + (kc.tanggunganLain || 0)),
+      utang: 0, bpjs: false, kesehatanSwasta: false, jiwa: false, asetLikuid: 0 };
+  },
 
   hitungUP(qz, gajiBulanan){
     // Metode kebutuhan: (pengeluaran keluarga tahunan × 10 th) + utang − aset likuid (pendekatan Human Life Value/DIME yang lazim)
